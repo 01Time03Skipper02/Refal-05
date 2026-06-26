@@ -26,12 +26,12 @@
   source ../c-plus-plus.conf.sh
   export R05CFLAGS="-orefal05c -DR05_SHOW_STAT $R05CFLAGS"
   export R05PATH=../lib
-  echo Y | ${EXECUTABLE} ${MODULES} ${LIBS} Library refal05rts
+  echo Y | ${EXECUTABLE} ${MODULES} ${LIBS} Library refal05rts \
+    cl_iter_table.c \
+    compact_iter.c \
+    compact_list.c \
+    compact_runtime_storage.c
 
-  # Копирование необходимо при компиляции при помощи Cygwin или MSYS,
-  # поскольку на платформе Windows невозможно перезаписать исполнимый
-  # файл, если соответствующая ему программма выполняется.
-  # Поэтому создаём файл в текущей папке и перекладываем в ../bin
   mv refal05c ../bin
 
   mkdir -p cfiles

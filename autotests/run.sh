@@ -31,7 +31,11 @@ run_test_aux() {
     SATELLITEC=
   fi
 
-  $CLINE -I../lib -o$EXE $CFILE $SATELLITEC ../lib/Library.c ../lib/refal05rts.c
+  $CLINE -I../lib -o$EXE $CFILE $SATELLITEC ../lib/Library.c ../lib/refal05rts.c \
+    ../lib/cl_iter_table.c \
+    ../lib/compact_iter.c \
+    ../lib/compact_list.c \
+    ../lib/compact_runtime_storage.c
   if [ $? -gt 0 ]; then
     echo COMPILATION FAILED
     exit
