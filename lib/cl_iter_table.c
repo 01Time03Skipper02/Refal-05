@@ -8,7 +8,7 @@
 
 typedef struct cl_slot {
   unsigned short  macro_id;
-  unsigned short  next;
+  unsigned int    next;
   short           index;
   unsigned char   gen;
   unsigned char   frame_id;
@@ -27,6 +27,7 @@ static unsigned char s_next_frame = 1;
 
 #define GEN_MASK 0xFFu
 #define SLOT_SHIFT 8
+#define SLOT_ID_MAX (UINT_MAX >> SLOT_SHIFT)
 
 #define MAKE_HANDLE(slot_id, gen) \
   (((unsigned int)(slot_id) << SLOT_SHIFT) | ((unsigned int)(gen) & GEN_MASK))
@@ -34,9 +35,9 @@ static unsigned char s_next_frame = 1;
 #define HANDLE_SLOT(h)  ((unsigned int)(h) >> SLOT_SHIFT)
 #define HANDLE_GEN(h)   ((unsigned int)(h) & GEN_MASK)
 
-static unsigned short checked_slot_id(unsigned int slot_id) {
-  assert(slot_id <= USHRT_MAX);
-  return (unsigned short)slot_id;
+static unsigned int checked_slot_id(unsigned int slot_id) {
+  assert(slot_id <= SLOT_ID_MAX);
+  return slot_id;
 }
 
 static unsigned short checked_macro_id(unsigned int macro_id) {
@@ -53,7 +54,7 @@ static void slots_grow(unsigned int min_needed) {
   unsigned int new_cap;
   cl_slot_t *new_slots;
 
-  assert(min_needed <= USHRT_MAX);
+  assert(min_needed <= SLOT_ID_MAX);
 
   new_cap = min_needed < CL_SLOTS_INITIAL ? CL_SLOTS_INITIAL : min_needed;
   assert(new_cap >= min_needed);

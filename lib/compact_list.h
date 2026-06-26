@@ -25,7 +25,7 @@ typedef struct cm_item {
 typedef struct cm_macronode {
   struct cm_macronode *prev_macro;
   struct cm_macronode *next_macro;
-  unsigned short        slot_list_head;
+  unsigned int          slot_list_head;
   unsigned short        macro_id;
   unsigned short        capacity;
   unsigned short        count;
