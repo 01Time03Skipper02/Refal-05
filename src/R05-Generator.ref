@@ -255,12 +255,12 @@ CmdAllocStack {
   (e.Indent) 0 = /* пусто */;
 
   (e.Indent) s.Size
-    = (e.Indent 'struct r05_node *p[' <Symb s.Size> '] = { 0 };');
+    = (e.Indent 'cl_iter_t p[' <Symb s.Size> '] = { 0 };');
 }
 
 CmdInitHole0 {
   (e.Indent)
-    = (e.Indent <Elem 0> ' = arg_begin->next;')
+    = (e.Indent <Elem 0> ' = cl_iter_next(arg_begin);')
       (e.Indent <Elem 1> ' = arg_end;');
 }
 
@@ -319,7 +319,7 @@ CmdClosedE {
 
 CmdOpenedE-Start {
   (e.Indent) s.L s.R 'e' s.Offset
-    = (e.Indent <Elem s.Offset> ' = ' <Elem s.L> '->next;')
+    = (e.Indent <Elem s.Offset> ' = cl_iter_next(' <Elem s.L> ');')
       (e.Indent <Elem <Inc s.Offset>> ' = ' <Elem s.L> ';')
       (e.Indent 'r05_start_e_loop();')
       (e.Indent 'do {');

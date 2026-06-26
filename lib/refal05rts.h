@@ -42,8 +42,16 @@ enum r05_datatag {
 };
 
 struct r05_node;
+#ifdef R05_COMPACT_HANDLES
+#include "cl_handle.h"
+typedef cl_handle_t cl_iter_t;
+#define CL_ITER_NULL ((cl_iter_t) { CL_HANDLE_NULL })
+#else
+typedef struct r05_node *cl_iter_t;
+#define CL_ITER_NULL NULL
+#endif
 
-typedef void (*r05_function_ptr) (struct r05_node *begin, struct r05_node *end);
+typedef void (*r05_function_ptr) (cl_iter_t begin, cl_iter_t end);
 
 struct r05_function {
   r05_function_ptr ptr;
@@ -72,70 +80,110 @@ struct r05_node {
 };
 
 
+#ifdef R05_COMPACT_HANDLES
+cl_iter_t cl_iter_next(cl_iter_t it);
+cl_iter_t cl_iter_prev(cl_iter_t it);
+int cl_iter_eq(cl_iter_t a, cl_iter_t b);
+
+enum r05_datatag cl_iter_tag(cl_iter_t it);
+void cl_iter_set_tag(cl_iter_t it, enum r05_datatag tag);
+
+char cl_iter_char(cl_iter_t it);
+r05_number cl_iter_number(cl_iter_t it);
+struct r05_function *cl_iter_function(cl_iter_t it);
+cl_iter_t cl_iter_link(cl_iter_t it);
+
+void cl_iter_set_char(cl_iter_t it, char ch);
+void cl_iter_set_number(cl_iter_t it, r05_number number);
+void cl_iter_set_function(cl_iter_t it, struct r05_function *function);
+void cl_iter_set_link(cl_iter_t it, cl_iter_t link);
+static inline int cl_iter_is_null(cl_iter_t it) {
+  return it.handle == CL_HANDLE_NULL;
+}
+#else
+static inline cl_iter_t cl_iter_next(cl_iter_t it) { return it->next; }
+static inline cl_iter_t cl_iter_prev(cl_iter_t it) { return it->prev; }
+static inline int cl_iter_eq(cl_iter_t a, cl_iter_t b) { return a == b; }
+
+static inline enum r05_datatag cl_iter_tag(cl_iter_t it) { return it->tag; }
+static inline void cl_iter_set_tag(cl_iter_t it, enum r05_datatag t) { it->tag = t; }
+
+static inline char cl_iter_char(cl_iter_t it) { return it->info.char_; }
+static inline r05_number cl_iter_number(cl_iter_t it) { return it->info.number; }
+static inline struct r05_function *cl_iter_function(cl_iter_t it) { return it->info.function; }
+static inline cl_iter_t cl_iter_link(cl_iter_t it) { return it->info.link; }
+
+static inline void cl_iter_set_char(cl_iter_t it, char c) { it->info.char_ = c; }
+static inline void cl_iter_set_number(cl_iter_t it, r05_number n) { it->info.number = n; }
+static inline void cl_iter_set_function(cl_iter_t it, struct r05_function *f) { it->info.function = f; }
+static inline void cl_iter_set_link(cl_iter_t it, cl_iter_t l) { it->info.link = l; }
+static inline int cl_iter_is_null(cl_iter_t it) { return it == NULL; }
+#endif
+
 /* Операции сопоставления с образцом */
 
-#define r05_empty_hole(left, right) ((left)->next == (right))
+#define r05_empty_hole(left, right) (cl_iter_eq(cl_iter_next(left), (right)))
 
 int r05_function_left(
-  struct r05_node **res, struct r05_node *left, struct r05_node *right,
+  cl_iter_t *res, cl_iter_t left, cl_iter_t right,
   struct r05_function *function
 );
 
 int r05_function_right(
-  struct r05_node **res, struct r05_node *left, struct r05_node *right,
+  cl_iter_t *res, cl_iter_t left, cl_iter_t right,
   struct r05_function *function
 );
 
 int r05_char_left(
-  struct r05_node **res, struct r05_node *left, struct r05_node *right, char ch
+  cl_iter_t *res, cl_iter_t left, cl_iter_t right, char ch
 );
 
 int r05_char_right(
-  struct r05_node **res, struct r05_node *left, struct r05_node *right, char ch
+  cl_iter_t *res, cl_iter_t left, cl_iter_t right, char ch
 );
 
 int r05_number_left(
-  struct r05_node **res, struct r05_node *left, struct r05_node *right,
+  cl_iter_t *res, cl_iter_t left, cl_iter_t right,
   r05_number number
 );
 
 int r05_number_right(
-  struct r05_node **res, struct r05_node *left, struct r05_node *right,
+  cl_iter_t *res, cl_iter_t left, cl_iter_t right,
   r05_number number
 );
 
 int r05_brackets_left(
-  struct r05_node **brackets, struct r05_node *left, struct r05_node *right
+  cl_iter_t *brackets, cl_iter_t left, cl_iter_t right
 );
 
 int r05_brackets_right(
-  struct r05_node **brackets, struct r05_node *left, struct r05_node *right
+  cl_iter_t *brackets, cl_iter_t left, cl_iter_t right
 );
 
 int r05_svar_left(
-  struct r05_node **svar, struct r05_node *left, struct r05_node *right
+  cl_iter_t *svar, cl_iter_t left, cl_iter_t right
 );
 
 int r05_svar_right(
-  struct r05_node **svar, struct r05_node *left, struct r05_node *right
+  cl_iter_t *svar, cl_iter_t left, cl_iter_t right
 );
 
 int r05_tvar_left(
-  struct r05_node **tvar, struct r05_node *left, struct r05_node *right
+  cl_iter_t *tvar, cl_iter_t left, cl_iter_t right
 );
 
 int r05_tvar_right(
-  struct r05_node **tvar, struct r05_node *left, struct r05_node *right
+  cl_iter_t *tvar, cl_iter_t left, cl_iter_t right
 );
 
 int r05_repeated_svar_left(
-  struct r05_node **svar, struct r05_node *left, struct r05_node *right,
-  struct r05_node **svar_sample
+  cl_iter_t *svar, cl_iter_t left, cl_iter_t right,
+  cl_iter_t *svar_sample
 );
 
 int r05_repeated_svar_right(
-  struct r05_node **svar, struct r05_node *left, struct r05_node *right,
-  struct r05_node **svar_sample
+  cl_iter_t *svar, cl_iter_t left, cl_iter_t right,
+  cl_iter_t *svar_sample
 );
 
 #define r05_repeated_tvar_left(v, l, r, s) \
@@ -151,56 +199,59 @@ int r05_repeated_svar_right(
   r05_repeated_tevar_right(v, l, r, s, 'e')
 
 int r05_repeated_tevar_left(
-  struct r05_node **tevar, struct r05_node *left, struct r05_node *right,
-  struct r05_node **tevar_sample, char type
+  cl_iter_t *tevar, cl_iter_t left, cl_iter_t right,
+  cl_iter_t *tevar_sample, char type
 );
 
 int r05_repeated_tevar_right(
-  struct r05_node **tevar, struct r05_node *left, struct r05_node *right,
-  struct r05_node **tevar_sample, char type
+  cl_iter_t *tevar, cl_iter_t left, cl_iter_t right,
+  cl_iter_t *tevar_sample, char type
 );
 
 #define r05_close_evar(evar, left, right) \
-  ((evar)[0] = (left)->next, (evar)[1] = (right)->prev)
+  ((evar)[0] = cl_iter_next(left), (evar)[1] = cl_iter_prev(right))
 
-int r05_open_evar_advance(struct r05_node **evar, struct r05_node *right);
+int r05_open_evar_advance(cl_iter_t *evar, cl_iter_t right);
 
 size_t r05_read_chars(
-  struct r05_node **char_interval, char buffer[], size_t buflen,
-  struct r05_node *left, struct r05_node *right
+  cl_iter_t *char_interval, char buffer[], size_t buflen,
+  cl_iter_t left, cl_iter_t right
 );
 
 /* Операции построения результата */
 
-void r05_push_stack(struct r05_node *call_bracket);
-void r05_link_brackets(struct r05_node *left, struct r05_node *right);
+void r05_push_stack(cl_iter_t call_bracket);
+void r05_link_brackets(cl_iter_t left, cl_iter_t right);
 
-void r05_correct_evar(struct r05_node **evar);
+void r05_correct_evar(cl_iter_t *evar);
 
 #define r05_splice_tvar r05_splice_tevar
 #define r05_splice_evar r05_splice_tevar
 
-void r05_splice_tevar(struct r05_node *res, struct r05_node **tevar);
+void r05_splice_tevar(cl_iter_t res, cl_iter_t *tevar);
 
-void r05_splice_to_freelist(struct r05_node *first, struct r05_node *last);
-void r05_splice_from_freelist(struct r05_node *pos);
+void r05_splice_to_freelist(cl_iter_t first, cl_iter_t last);
+void r05_splice_from_freelist(cl_iter_t pos);
 
 void r05_reset_allocator(void);
 
-struct r05_node *r05_alloc_node(enum r05_datatag tag);
+cl_iter_t r05_alloc_node(enum r05_datatag tag);
 
-struct r05_node *r05_insert_pos(void);
+cl_iter_t r05_insert_pos(void);
 
-#define r05_alloc_char(ch) \
-  (r05_alloc_node(R05_DATATAG_CHAR)->info.char_ = (ch))
+static inline void r05_alloc_char(char ch) {
+  cl_iter_set_char(r05_alloc_node(R05_DATATAG_CHAR), ch);
+}
 
 void r05_alloc_chars(const char buffer[], size_t len);
 
-#define r05_alloc_number(num) \
-  (r05_alloc_node(R05_DATATAG_NUMBER)->info.number = (num))
+static inline void r05_alloc_number(r05_number num) {
+  cl_iter_set_number(r05_alloc_node(R05_DATATAG_NUMBER), num);
+}
 
-#define r05_alloc_function(func) \
-  (r05_alloc_node(R05_DATATAG_FUNCTION)->info.function = func)
+static inline void r05_alloc_function(struct r05_function *func) {
+  cl_iter_set_function(r05_alloc_node(R05_DATATAG_FUNCTION), func);
+}
 
 #define r05_alloc_open_bracket(pos) \
   (*(pos) = r05_alloc_node(R05_DATATAG_OPEN_BRACKET))
@@ -216,17 +267,42 @@ void r05_alloc_chars(const char buffer[], size_t len);
 
 #define r05_alloc_insert_pos(pos) (*(pos) = r05_insert_pos());
 
-#define r05_alloc_svar(sample) \
-  (r05_alloc_node((*(sample))->tag)->info = (*(sample))->info);
+static inline void r05_alloc_svar(cl_iter_t *sample) {
+  cl_iter_t node = r05_alloc_node(cl_iter_tag(*sample));
+
+  switch (cl_iter_tag(*sample)) {
+    case R05_DATATAG_CHAR:
+      cl_iter_set_char(node, cl_iter_char(*sample));
+      break;
+
+    case R05_DATATAG_NUMBER:
+      cl_iter_set_number(node, cl_iter_number(*sample));
+      break;
+
+    case R05_DATATAG_FUNCTION:
+      cl_iter_set_function(node, cl_iter_function(*sample));
+      break;
+
+    case R05_DATATAG_OPEN_BRACKET:
+    case R05_DATATAG_CLOSE_BRACKET:
+    case R05_DATATAG_OPEN_CALL:
+    case R05_DATATAG_CLOSE_CALL:
+      cl_iter_set_link(node, cl_iter_link(*sample));
+      break;
+
+    default:
+      break;
+  }
+}
 
 #define r05_alloc_tvar r05_alloc_tevar
 #define r05_alloc_evar r05_alloc_tevar
 
-void r05_alloc_tevar(struct r05_node **sample);
+void r05_alloc_tevar(cl_iter_t *sample);
 void r05_alloc_string(const char *string);
 
 
-void r05_enum_function_code(struct r05_node *begin, struct r05_node *end);
+void r05_enum_function_code(cl_iter_t begin, cl_iter_t end);
 
 
 /* Профилирование */
@@ -286,13 +362,13 @@ R05_NORETURN void r05_switch_default_violation_impl(
 
 #define R05_DEFINE_FUNCTION_AUX(name, scope, rep, entry) \
   static void r05c_ ## name( \
-    struct r05_node *arg_begin, struct r05_node *arg_end \
+    cl_iter_t arg_begin, cl_iter_t arg_end \
   ); \
   scope struct r05_function r05f_ ## name = { \
     r05c_ ## name, rep, entry, NULL, R05_INIT_PROFILER \
   }; \
   static void r05c_ ## name( \
-    struct r05_node *arg_begin, struct r05_node *arg_end \
+    cl_iter_t arg_begin, cl_iter_t arg_end \
   )
 
 
@@ -304,7 +380,7 @@ struct r05_metatable {
 
 #define R05_DEFINE_METAFUNCTION(name, rep) \
   extern void r05c_ ## name( \
-    struct r05_node *arg_begin, struct r05_node *arg_end \
+    cl_iter_t arg_begin, cl_iter_t arg_end \
   ); \
   static struct r05_metatable metatable; \
   static struct r05_function r05f_ ## name = { \
@@ -313,20 +389,20 @@ struct r05_metatable {
 
 #define R05_IMPLEMENT_METAFUNCTION(name, rep) \
   extern void r05c_ ## name( \
-    struct r05_node *arg_begin, struct r05_node *arg_end \
+    cl_iter_t arg_begin, cl_iter_t arg_end \
   ); \
   static struct r05_function r05f_ ## name = { \
     r05c_ ## name, rep, 0, NULL, R05_INIT_PROFILER \
   }; \
   void r05c_ ## name( \
-    struct r05_node *arg_begin, struct r05_node *arg_end \
+    cl_iter_t arg_begin, cl_iter_t arg_end \
   )
 
 
-void r05_br(struct r05_node *arg_begin, struct r05_node *arg_end);
-void r05_dg(struct r05_node *arg_begin, struct r05_node *arg_end);
-void r05_cp(struct r05_node *arg_begin, struct r05_node *arg_end);
-void r05_rp(struct r05_node *arg_begin, struct r05_node *arg_end);
+void r05_br(cl_iter_t arg_begin, cl_iter_t arg_end);
+void r05_dg(cl_iter_t arg_begin, cl_iter_t arg_end);
+void r05_cp(cl_iter_t arg_begin, cl_iter_t arg_end);
+void r05_rp(cl_iter_t arg_begin, cl_iter_t arg_end);
 
 
 #ifdef __cplusplus

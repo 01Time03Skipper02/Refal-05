@@ -8,6 +8,15 @@
 
 #include "refal05rts.h"
 
+#ifdef R05_COMPACT_LIST
+#include "compact_list.h"
+#endif  /* R05_COMPACT_LIST */
+
+#ifdef R05_COMPACT_HANDLES
+#include "cl_iter_table.h"
+#include "compact_runtime_storage.h"
+#endif  /* R05_COMPACT_HANDLES */
+
 #ifndef R05_SHOW_DEBUG
 #define R05_SHOW_DEBUG 0
 #endif  /* ifdef R05_SHOW_DEBUG */
@@ -53,40 +62,41 @@ struct static_asserts {
   (strcmp((left)->name, (right)->name) == 0)
 
 
-#define match_symbol_func(type, side, dir, param_type, tag_suf, field) \
+#define match_symbol_func(type, side, advance, param_type, tag_suf, reader) \
   int r05_ ## type ## _ ## side( \
-    struct r05_node **res, struct r05_node *left, struct r05_node *right, \
+    cl_iter_t *res, cl_iter_t left, cl_iter_t right, \
     param_type value \
   ) { \
-    *res = side = side->dir; \
+    *res = side = advance(side); \
     \
-    return left != right && R05_DATATAG_ ## tag_suf == side->tag \
-      && equal_ ## type ## s(side->info.field, value); \
+    return ! cl_iter_eq(left, right) \
+      && R05_DATATAG_ ## tag_suf == cl_iter_tag(side) \
+      && equal_ ## type ## s(reader(side), value); \
   }
 
 
-#define match_symbol_funcs(type, param_type, tag_suf, field) \
-  match_symbol_func(type, left, next, param_type, tag_suf, field) \
-  match_symbol_func(type, right, prev, param_type, tag_suf, field)
+#define match_symbol_funcs(type, param_type, tag_suf, reader) \
+  match_symbol_func(type, left,  cl_iter_next, param_type, tag_suf, reader) \
+  match_symbol_func(type, right, cl_iter_prev, param_type, tag_suf, reader)
 
 
 #define equal_chars(x, y) ((x) == (y))
 #define equal_numbers(x, y) ((x) == (y))
 
 
-match_symbol_funcs(function, struct r05_function *, FUNCTION, function);
-match_symbol_funcs(char, char, CHAR, char_);
-match_symbol_funcs(number, r05_number, NUMBER, number);
+match_symbol_funcs(function, struct r05_function *, FUNCTION, cl_iter_function);
+match_symbol_funcs(char,     char,                  CHAR,     cl_iter_char);
+match_symbol_funcs(number,   r05_number,            NUMBER,   cl_iter_number);
 
 
 int r05_brackets_left(
-  struct r05_node **brackets, struct r05_node *left, struct r05_node *right
+  cl_iter_t *brackets, cl_iter_t left, cl_iter_t right
 ) {
-  left = left->next;
+  left = cl_iter_next(left);
 
-  if (left != right && R05_DATATAG_OPEN_BRACKET == left->tag) {
+  if (! cl_iter_eq(left, right) && R05_DATATAG_OPEN_BRACKET == cl_iter_tag(left)) {
     brackets[0] = left;
-    brackets[1] = left->info.link;
+    brackets[1] = cl_iter_link(left);
 
     return 1;
   } else {
@@ -96,12 +106,13 @@ int r05_brackets_left(
 
 
 int r05_brackets_right(
-  struct r05_node **brackets, struct r05_node *left, struct r05_node *right
+  cl_iter_t *brackets, cl_iter_t left, cl_iter_t right
 ) {
-  right = right->prev;
+  right = cl_iter_prev(right);
 
-  if (left != right && R05_DATATAG_CLOSE_BRACKET == right->tag) {
-    brackets[0] = right->info.link;
+  if (! cl_iter_eq(left, right)
+      && R05_DATATAG_CLOSE_BRACKET == cl_iter_tag(right)) {
+    brackets[0] = cl_iter_link(right);
     brackets[1] = right;
 
     return 1;
@@ -111,85 +122,79 @@ int r05_brackets_right(
 }
 
 
-#define is_open_bracket(node) (R05_DATATAG_OPEN_BRACKET == (node)->tag)
-#define is_close_bracket(node) (R05_DATATAG_CLOSE_BRACKET == (node)->tag)
+#define is_open_bracket(node) \
+  (R05_DATATAG_OPEN_BRACKET == cl_iter_tag(node))
+#define is_close_bracket(node) \
+  (R05_DATATAG_CLOSE_BRACKET == cl_iter_tag(node))
 
 int r05_svar_left(
-  struct r05_node **svar, struct r05_node *left, struct r05_node *right
+  cl_iter_t *svar, cl_iter_t left, cl_iter_t right
 ) {
-  *svar = left = left->next;
+  *svar = left = cl_iter_next(left);
 
-  return left != right && ! is_open_bracket(left);
+  return ! cl_iter_eq(left, right) && ! is_open_bracket(left);
 }
 
 
 int r05_svar_right(
-  struct r05_node **svar, struct r05_node *left, struct r05_node *right
+  cl_iter_t *svar, cl_iter_t left, cl_iter_t right
 ) {
-  *svar = right = right->prev;
+  *svar = right = cl_iter_prev(right);
 
-  return left != right && ! is_close_bracket(right);
+  return ! cl_iter_eq(left, right) && ! is_close_bracket(right);
 }
 
 
 int r05_tvar_left(
-  struct r05_node **tvar, struct r05_node *left, struct r05_node *right
+  cl_iter_t *tvar, cl_iter_t left, cl_iter_t right
 ) {
-  left = left->next;
+  left = cl_iter_next(left);
 
-  if (left == right) {
+  if (cl_iter_eq(left, right)) {
     return 0;
   } else {
     tvar[0] = left;
-    tvar[1] = is_open_bracket(left) ? left->info.link : left;
+    tvar[1] = is_open_bracket(left) ? cl_iter_link(left) : left;
     return 1;
   }
 }
 
 
 int r05_tvar_right(
-  struct r05_node **tvar, struct r05_node *left, struct r05_node *right
+  cl_iter_t *tvar, cl_iter_t left, cl_iter_t right
 ) {
-  right = right->prev;
+  right = cl_iter_prev(right);
 
-  if (left == right) {
+  if (cl_iter_eq(left, right)) {
     return 0;
   } else {
-    tvar[0] = is_close_bracket(right) ? right->info.link : right;
+    tvar[0] = is_close_bracket(right) ? cl_iter_link(right) : right;
     tvar[1] = right;
     return 1;
   }
 }
 
 
-static int equal_nodes(struct r05_node *node1, struct r05_node *node2) {
-  if (node1->tag != node2->tag) {
+static int equal_nodes(cl_iter_t node1, cl_iter_t node2) {
+  if (cl_iter_tag(node1) != cl_iter_tag(node2)) {
     return 0;
   } else {
-    switch (node1->tag) {
+    switch (cl_iter_tag(node1)) {
       case R05_DATATAG_CHAR:
-        return (node1->info.char_ == node2->info.char_);
+        return cl_iter_char(node1) == cl_iter_char(node2);
 
       case R05_DATATAG_NUMBER:
-        return (node1->info.number == node2->info.number);
+        return cl_iter_number(node1) == cl_iter_number(node2);
 
       case R05_DATATAG_FUNCTION:
-        return equal_functions(node1->info.function, node2->info.function);
+        return equal_functions(cl_iter_function(node1), cl_iter_function(node2));
 
-      /*
-        Сведения о связях между скобками нужны для других целей,
-        здесь же нам важны только их одновременные появления.
-      */
       case R05_DATATAG_OPEN_BRACKET:
       case R05_DATATAG_CLOSE_BRACKET:
         return 1;
 
-      /*
-        Данная функция предназначена только для использования функциями
-        сопоставления с образцом. Поэтому других узлов мы тут не ожидаем.
-      */
       default:
-        r05_switch_default_violation(node1->tag);
+        r05_switch_default_violation(cl_iter_tag(node1));
 #ifndef R05_NORETURN_DEFINED
         return 0;
 #endif
@@ -199,21 +204,21 @@ static int equal_nodes(struct r05_node *node1, struct r05_node *node2) {
 
 
 int r05_repeated_svar_left(
-  struct r05_node **svar, struct r05_node *left, struct r05_node *right,
-  struct r05_node **svar_sample
+  cl_iter_t *svar, cl_iter_t left, cl_iter_t right,
+  cl_iter_t *svar_sample
 ) {
-  *svar = left = left->next;
+  *svar = left = cl_iter_next(left);
 
-  return left != right && equal_nodes(left, *svar_sample);
+  return ! cl_iter_eq(left, right) && equal_nodes(left, *svar_sample);
 }
 
 int r05_repeated_svar_right(
-  struct r05_node **svar, struct r05_node *left, struct r05_node *right,
-  struct r05_node **svar_sample
+  cl_iter_t *svar, cl_iter_t left, cl_iter_t right,
+  cl_iter_t *svar_sample
 ) {
-  *svar = right = right->prev;
+  *svar = right = cl_iter_prev(right);
 
-  return left != right && equal_nodes(right, *svar_sample);
+  return ! cl_iter_eq(left, right) && equal_nodes(right, *svar_sample);
 }
 
 
@@ -221,36 +226,30 @@ static void add_match_repeated_tvar_time(clock_t duration);
 static void add_match_repeated_evar_time(clock_t duration);
 
 int r05_repeated_tevar_left(
-  struct r05_node **tevar, struct r05_node *left, struct r05_node *right,
-  struct r05_node **tevar_sample, char type
+  cl_iter_t *tevar, cl_iter_t left, cl_iter_t right,
+  cl_iter_t *tevar_sample, char type
 ) {
   clock_t start_match = clock();
-  struct r05_node *current = left->next;
-  struct r05_node *limit = right;
-  struct r05_node *cur_sample = tevar_sample[0];
-  struct r05_node *limit_sample = tevar_sample[1]->next;
+  cl_iter_t current = cl_iter_next(left);
+  cl_iter_t limit = right;
+  cl_iter_t cur_sample = tevar_sample[0];
+  cl_iter_t limit_sample = cl_iter_next(tevar_sample[1]);
 
   while (
-    /* порядок условий важен */
-    current != limit && cur_sample != limit_sample
+    ! cl_iter_eq(current, limit) && ! cl_iter_eq(cur_sample, limit_sample)
       && equal_nodes(current, cur_sample)
   ) {
-    cur_sample = cur_sample->next;
-    current = current->next;
+    cur_sample = cl_iter_next(cur_sample);
+    current = cl_iter_next(current);
   }
 
   (type == 't' ? add_match_repeated_tvar_time : add_match_repeated_evar_time)(
     clock() - start_match
   );
 
-  /*
-    Здесь current == limit || cur_sample == limit_sample
-      || ! equal_nodes(current, cur_sample)
-  */
-  if (cur_sample == limit_sample) {
-    /* Это нормальное завершение цикла — вся образцовая переменная проверена */
-    tevar[0] = left->next;
-    tevar[1] = current->prev;
+  if (cl_iter_eq(cur_sample, limit_sample)) {
+    tevar[0] = cl_iter_next(left);
+    tevar[1] = cl_iter_prev(current);
     return 1;
   } else {
     return 0;
@@ -259,36 +258,30 @@ int r05_repeated_tevar_left(
 
 
 int r05_repeated_tevar_right(
-  struct r05_node **tevar, struct r05_node *left, struct r05_node *right,
-  struct r05_node **tevar_sample, char type
+  cl_iter_t *tevar, cl_iter_t left, cl_iter_t right,
+  cl_iter_t *tevar_sample, char type
 ) {
   clock_t start_match = clock();
-  struct r05_node *current = right->prev;
-  struct r05_node *limit = left;
-  struct r05_node *cur_sample = tevar_sample[1];
-  struct r05_node *limit_sample = tevar_sample[0]->prev;
+  cl_iter_t current = cl_iter_prev(right);
+  cl_iter_t limit = left;
+  cl_iter_t cur_sample = tevar_sample[1];
+  cl_iter_t limit_sample = cl_iter_prev(tevar_sample[0]);
 
   while (
-    /* порядок условий важен */
-    current != limit && cur_sample != limit_sample
+    ! cl_iter_eq(current, limit) && ! cl_iter_eq(cur_sample, limit_sample)
       && equal_nodes(current, cur_sample)
   ) {
-    current = current->prev;
-    cur_sample = cur_sample->prev;
+    current = cl_iter_prev(current);
+    cur_sample = cl_iter_prev(cur_sample);
   }
 
   (type == 't' ? add_match_repeated_tvar_time : add_match_repeated_evar_time)(
     clock() - start_match
   );
 
-  /*
-    Здесь current == limit || cur_sample == limit_sample
-      || ! equal_nodes(current, cur_sample)
-  */
-  if (cur_sample == limit_sample) {
-    /* Это нормальное завершение цикла — вся образцовая переменная проверена */
-    tevar[0] = current->next;
-    tevar[1] = right->prev;
+  if (cl_iter_eq(cur_sample, limit_sample)) {
+    tevar[0] = cl_iter_next(current);
+    tevar[1] = cl_iter_prev(right);
     return 1;
   } else {
     return 0;
@@ -296,8 +289,8 @@ int r05_repeated_tevar_right(
 }
 
 
-int r05_open_evar_advance(struct r05_node **evar, struct r05_node *right) {
-  struct r05_node *term[2];
+int r05_open_evar_advance(cl_iter_t *evar, cl_iter_t right) {
+  cl_iter_t term[2];
 
   if (r05_tvar_left(term, evar[1], right)) {
     evar[1] = term[1];
@@ -309,18 +302,19 @@ int r05_open_evar_advance(struct r05_node **evar, struct r05_node *right) {
 
 
 size_t r05_read_chars(
-  struct r05_node **char_interval, char buffer[], size_t buflen,
-  struct r05_node *left, struct r05_node *right
+  cl_iter_t *char_interval, char buffer[], size_t buflen,
+  cl_iter_t left, cl_iter_t right
 ) {
   size_t nread = 0;
-  struct r05_node *cur = char_interval[0] = left->next;
-  while (nread < buflen && cur != right && R05_DATATAG_CHAR == cur->tag) {
-    buffer[nread] = cur->info.char_;
+  cl_iter_t cur = char_interval[0] = cl_iter_next(left);
+  while (nread < buflen && ! cl_iter_eq(cur, right)
+         && R05_DATATAG_CHAR == cl_iter_tag(cur)) {
+    buffer[nread] = cl_iter_char(cur);
     ++nread;
-    cur = cur->next;
+    cur = cl_iter_next(cur);
   }
 
-  char_interval[1] = cur->prev;
+  char_interval[1] = cl_iter_prev(cur);
   return nread;
 }
 
@@ -328,6 +322,10 @@ size_t r05_read_chars(
 /*==============================================================================
    Распределитель памяти
 ==============================================================================*/
+
+static void make_dump(void);
+
+#ifndef R05_COMPACT_HANDLES
 
 static struct r05_node s_end_free_list;
 
@@ -397,8 +395,6 @@ static int create_nodes(void) {
 }
 
 
-static void make_dump(void);
-
 static void ensure_memory(void) {
   if ((s_free_ptr == &s_end_free_list) && ! create_nodes()) {
     fprintf(stderr, "\nNO MEMORY\n\n");
@@ -428,6 +424,38 @@ static void free_memory(void) {
 #endif  /* R05_SHOW_STAT */
 }
 
+#else
+
+static compact_runtime_storage_t s_compact_storage;
+static int s_compact_storage_initialized = 0;
+static cl_iter_t *s_call_stack = NULL;
+static size_t s_call_stack_size = 0;
+static size_t s_call_stack_capacity = 0;
+
+
+static void ensure_compact_storage(void) {
+  if (! s_compact_storage_initialized) {
+    cl_iter_table_init();
+    crs_init(&s_compact_storage);
+    s_compact_storage_initialized = 1;
+  }
+}
+
+
+static void free_memory(void) {
+  if (s_compact_storage_initialized) {
+    crs_destroy(&s_compact_storage);
+    cl_iter_table_free();
+    s_compact_storage_initialized = 0;
+  }
+  free(s_call_stack);
+  s_call_stack = NULL;
+  s_call_stack_size = 0;
+  s_call_stack_capacity = 0;
+}
+
+#endif  /* R05_COMPACT_HANDLES */
+
 
 /*==============================================================================
    Операции построения результата
@@ -437,11 +465,19 @@ static void start_building_result(void);
 
 void r05_reset_allocator(void) {
   start_building_result();
+#ifdef R05_COMPACT_HANDLES
+  ensure_compact_storage();
+  crs_reset_build(&s_compact_storage);
+#else
   s_free_ptr = s_begin_free_list.next;
+#endif
 }
 
 
-struct r05_node *r05_alloc_node(enum r05_datatag tag) {
+cl_iter_t r05_alloc_node(enum r05_datatag tag) {
+#ifdef R05_COMPACT_HANDLES
+  return crs_alloc_node(&s_compact_storage, tag);
+#else
   struct r05_node *node;
 
   ensure_memory();
@@ -449,15 +485,21 @@ struct r05_node *r05_alloc_node(enum r05_datatag tag) {
   s_free_ptr = s_free_ptr->next;
   node->tag = tag;
   return node;
+#endif
 }
 
 
-struct r05_node *r05_insert_pos(void) {
+cl_iter_t r05_insert_pos(void) {
+#ifdef R05_COMPACT_HANDLES
+  return crs_insert_pos(&s_compact_storage);
+#else
   ensure_memory();
   return s_free_ptr;
+#endif
 }
 
 
+#ifndef R05_COMPACT_HANDLES
 static void list_splice(
   struct r05_node *res, struct r05_node *begin, struct r05_node *end
 ) {
@@ -473,34 +515,85 @@ static void list_splice(
     weld(prev_begin, next_end);
   }
 }
+#endif
 
 
 static void add_copy_tevar_time(clock_t duration);
 
-void r05_alloc_tevar(struct r05_node **sample) {
-  struct r05_node *p, *limit;
+void r05_alloc_tevar(cl_iter_t *sample) {
+  cl_iter_t p, limit;
   clock_t start_copy_time = clock();
 
-  struct r05_node *bracket_stack = 0;
+#ifdef R05_COMPACT_HANDLES
+  cl_iter_t *bracket_stack = NULL;
+  size_t bracket_stack_size = 0;
+  size_t bracket_stack_capacity = 0;
+#else
+  cl_iter_t bracket_stack = CL_ITER_NULL;
+#endif
 
-  for (p = sample[0], limit = sample[1]->next; p != limit; p = p->next) {
-    struct r05_node *copy = r05_alloc_node(p->tag);
+  for (p = sample[0], limit = cl_iter_next(sample[1]);
+       ! cl_iter_eq(p, limit);
+       p = cl_iter_next(p)) {
+    cl_iter_t copy = r05_alloc_node(cl_iter_tag(p));
 
     if (is_open_bracket(copy)) {
-      copy->info.link = bracket_stack;
+#ifdef R05_COMPACT_HANDLES
+      if (bracket_stack_size == bracket_stack_capacity) {
+        size_t new_capacity = bracket_stack_capacity == 0
+          ? 16 : 2 * bracket_stack_capacity;
+        cl_iter_t *grown = realloc(
+          bracket_stack, new_capacity * sizeof(bracket_stack[0])
+        );
+        if (grown == NULL) {
+          r05_builtin_error("bracket stack allocation failed");
+        }
+        bracket_stack = grown;
+        bracket_stack_capacity = new_capacity;
+      }
+      bracket_stack[bracket_stack_size++] = copy;
+#else
+      cl_iter_set_link(copy, bracket_stack);
       bracket_stack = copy;
+#endif
     } else if (is_close_bracket(copy)) {
-      struct r05_node *open_cobracket = bracket_stack;
+#ifdef R05_COMPACT_HANDLES
+      cl_iter_t open_cobracket;
+      assert(bracket_stack_size > 0);
+      open_cobracket = bracket_stack[--bracket_stack_size];
+#else
+      cl_iter_t open_cobracket = bracket_stack;
 
-      assert(bracket_stack != 0);
-      bracket_stack = bracket_stack->info.link;
+      assert(! cl_iter_is_null(bracket_stack));
+      bracket_stack = cl_iter_link(bracket_stack);
+#endif
       r05_link_brackets(open_cobracket, copy);
     } else {
-      copy->info = p->info;
+      switch (cl_iter_tag(p)) {
+        case R05_DATATAG_CHAR:
+          cl_iter_set_char(copy, cl_iter_char(p));
+          break;
+
+        case R05_DATATAG_NUMBER:
+          cl_iter_set_number(copy, cl_iter_number(p));
+          break;
+
+        case R05_DATATAG_FUNCTION:
+          cl_iter_set_function(copy, cl_iter_function(p));
+          break;
+
+        default:
+          break;
+      }
     }
   }
 
-  assert(bracket_stack == 0);
+#ifdef R05_COMPACT_HANDLES
+  assert(bracket_stack_size == 0);
+  free(bracket_stack);
+#else
+  assert(cl_iter_is_null(bracket_stack));
+#endif
 
   add_copy_tevar_time(clock() - start_copy_time);
 }
@@ -521,46 +614,113 @@ void r05_alloc_string(const char *string) {
 }
 
 
-static struct r05_node *s_stack_ptr;
+#ifndef R05_COMPACT_HANDLES
+static cl_iter_t s_stack_ptr;
+#endif
 
-void r05_push_stack(struct r05_node *call_bracket) {
-  call_bracket->info.link = s_stack_ptr;
+#ifdef R05_COMPACT_HANDLES
+static void compact_trim_call_stack(void) {
+  size_t new_capacity;
+  cl_iter_t *trimmed;
+
+  if (s_call_stack_size == 0) {
+    free(s_call_stack);
+    s_call_stack = NULL;
+    s_call_stack_capacity = 0;
+    return;
+  }
+
+  new_capacity = s_call_stack_size < 8 ? 8 : s_call_stack_size;
+  if (new_capacity >= s_call_stack_capacity) {
+    return;
+  }
+
+  trimmed = (cl_iter_t *)realloc(
+    s_call_stack, new_capacity * sizeof(s_call_stack[0])
+  );
+  if (trimmed != NULL) {
+    s_call_stack = trimmed;
+    s_call_stack_capacity = new_capacity;
+  }
+}
+#endif
+
+void r05_push_stack(cl_iter_t call_bracket) {
+#ifdef R05_COMPACT_HANDLES
+  if (s_call_stack_size == s_call_stack_capacity) {
+    size_t new_capacity = s_call_stack_capacity == 0
+      ? 8 : 2 * s_call_stack_capacity;
+    cl_iter_t *grown = realloc(
+      s_call_stack, new_capacity * sizeof(s_call_stack[0])
+    );
+    if (grown == NULL) {
+      r05_builtin_error("call stack allocation failed");
+    }
+    s_call_stack = grown;
+    s_call_stack_capacity = new_capacity;
+  }
+  cl_iter_escape(call_bracket);
+  s_call_stack[s_call_stack_size++] = call_bracket;
+#ifdef R05_TRACE_STACK
+  fprintf(
+    stderr, "STACK push %u tag=%d depth=%lu\n",
+    call_bracket.handle, (int) cl_iter_tag(call_bracket),
+    (unsigned long) s_call_stack_size
+  );
+#endif
+#else
+  cl_iter_set_link(call_bracket, s_stack_ptr);
   s_stack_ptr = call_bracket;
+#endif
 }
 
 
-void r05_link_brackets(struct r05_node *left, struct r05_node *right) {
-  left->info.link = right;
-  right->info.link = left;
+void r05_link_brackets(cl_iter_t left, cl_iter_t right) {
+  cl_iter_set_link(left, right);
+  cl_iter_set_link(right, left);
 }
 
 
-void r05_correct_evar(struct r05_node **evar) {
-  if (evar[1]->next == evar[0]) {
-    evar[0] = 0;
-    evar[1] = 0;
+void r05_correct_evar(cl_iter_t *evar) {
+  if (cl_iter_eq(cl_iter_next(evar[1]), evar[0])) {
+    evar[0] = CL_ITER_NULL;
+    evar[1] = CL_ITER_NULL;
   }
 }
 
 
-void r05_splice_tevar(struct r05_node *res, struct r05_node **tevar) {
+void r05_splice_tevar(cl_iter_t res, cl_iter_t *tevar) {
+#ifdef R05_COMPACT_HANDLES
+  if (! cl_iter_is_null(tevar[0])) {
+    crs_splice_before(res, tevar[0], tevar[1]);
+  }
+#else
   list_splice(res, tevar[0], tevar[1]);
+#endif
 }
 
 
-void r05_splice_to_freelist(struct r05_node *begin, struct r05_node *end) {
+void r05_splice_to_freelist(cl_iter_t begin, cl_iter_t end) {
+#ifdef R05_COMPACT_HANDLES
+  crs_remove_range(begin, end);
+#else
   list_splice(s_free_ptr, begin, end);
+#endif
 }
 
 
-void r05_splice_from_freelist(struct r05_node *pos) {
+void r05_splice_from_freelist(cl_iter_t pos) {
+#ifdef R05_COMPACT_HANDLES
+  crs_splice_from_build(&s_compact_storage, pos);
+#else
   if (s_free_ptr != s_begin_free_list.next) {
     list_splice(pos, s_begin_free_list.next, s_free_ptr->prev);
   }
+#endif
 }
 
 
-void r05_enum_function_code(struct r05_node *begin, struct r05_node *end) {
+void r05_enum_function_code(cl_iter_t begin, cl_iter_t end) {
   (void) begin;
   (void) end;
   r05_recognition_impossible();
@@ -587,6 +747,42 @@ static clock_t s_total_match_repeated_evar_time_outside_e;
 
 static int s_in_generated;
 static int s_in_e_loop;
+
+#ifdef R05_COMPACT_LIST
+static size_t s_compact_peak_nodes  = 0;
+static size_t s_compact_total_nodes = 0;
+static size_t s_compact_step_count  = 0;
+
+static void compact_track_step(void);
+#endif  /* R05_COMPACT_LIST */
+
+
+#ifdef R05_COMPACT_HANDLES
+static size_t s_compact_peak_total_bytes = 0;
+static size_t s_compact_peak_lists_bytes = 0;
+static size_t s_compact_peak_classic_bytes = 0;
+static size_t s_compact_peak_elements = 0;
+
+static void compact_track_actual_step(void) {
+  cm_stats_t view = cm_list_stats(&s_compact_storage.view);
+  cm_stats_t build = cm_list_stats(&s_compact_storage.build);
+  cm_stats_t buried = cm_list_stats(&s_compact_storage.buried);
+  size_t lists_bytes = view.compact_bytes
+    + build.compact_bytes + buried.compact_bytes;
+  size_t total_bytes = lists_bytes
+    + cl_iter_table_capacity_bytes()
+    + s_call_stack_capacity * sizeof(s_call_stack[0]);
+
+  if (total_bytes > s_compact_peak_total_bytes) {
+    s_compact_peak_total_bytes = total_bytes;
+    s_compact_peak_lists_bytes = lists_bytes;
+    s_compact_peak_classic_bytes = view.classic_bytes
+      + build.classic_bytes + buried.classic_bytes;
+    s_compact_peak_elements = (size_t) view.total_elements
+      + (size_t) build.total_elements + (size_t) buried.total_elements;
+  }
+}
+#endif  /* R05_COMPACT_HANDLES */
 
 
 #ifdef R05_PROFILER
@@ -626,6 +822,20 @@ static void after_step(void) {
 
   s_in_generated = 0;
   s_in_e_loop = 0;
+
+#ifdef R05_COMPACT_LIST
+  compact_track_step();
+#endif  /* R05_COMPACT_LIST */
+#ifdef R05_COMPACT_HANDLES
+  static int compact_skip = 0;
+  if (++compact_skip % 10 == 0) {
+    cm_compact_list(&s_compact_storage.view);
+    cm_compact_list(&s_compact_storage.build);
+    cm_compact_list(&s_compact_storage.buried);
+    compact_trim_call_stack();
+    compact_track_actual_step();
+  }
+#endif  /* R05_COMPACT_HANDLES */
 }
 
 
@@ -743,7 +953,6 @@ static void print_profile(void) {
 }
 
 #ifdef R05_PROFILER
-/* предобъявление, без инициализатора */
 static unsigned long s_step_counter;
 
 static void print_functions_profile(double full_time_sec) {
@@ -843,6 +1052,7 @@ double r05_time_elapsed(void) {
 ==============================================================================*/
 
 
+#ifndef R05_COMPACT_HANDLES
 static struct r05_node s_end_view_field;
 
 static struct r05_node s_begin_view_field = {
@@ -851,27 +1061,71 @@ static struct r05_node s_begin_view_field = {
 static struct r05_node s_end_view_field = {
   &s_begin_view_field, 0, R05_DATATAG_ILLEGAL, { '\0' }
 };
-
-static struct r05_node *s_stack_ptr = NULL;
+#endif
 
 static unsigned long s_step_counter = 0;
 
+#ifdef R05_COMPACT_LIST
+static void compact_track_step(void) {
+  size_t n = 0;
+#ifdef R05_COMPACT_HANDLES
+  cm_iter_t p;
+  cm_iter_t end = cm_list_end(&s_compact_storage.view);
+  for (p = cm_list_begin(&s_compact_storage.view);
+       ! cm_iter_eq(p, end);
+       p = cm_iter_next(p)) {
+    n++;
+  }
+#else
+  cl_iter_t p;
+  for (p = cl_iter_next(&s_begin_view_field);
+       ! cl_iter_eq(p, &s_end_view_field);
+       p = cl_iter_next(p)) {
+    n++;
+  }
+#endif
+  if (n > s_compact_peak_nodes) {
+    s_compact_peak_nodes = n;
+  }
+  s_compact_total_nodes += n;
+  s_compact_step_count++;
+}
+#endif  /* R05_COMPACT_LIST */
 
-static struct r05_node *pop_stack(void) {
-  struct r05_node *res = s_stack_ptr;
-  s_stack_ptr = s_stack_ptr->info.link;
+
+static cl_iter_t pop_stack(void) {
+#ifdef R05_COMPACT_HANDLES
+  cl_iter_t result;
+  assert(s_call_stack_size > 0);
+  result = s_call_stack[--s_call_stack_size];
+#ifdef R05_TRACE_STACK
+  fprintf(
+    stderr, "STACK pop  %u tag=%d depth=%lu\n",
+    result.handle, (int) cl_iter_tag(result),
+    (unsigned long) s_call_stack_size
+  );
+#endif
+  return result;
+#else
+  cl_iter_t res = s_stack_ptr;
+  s_stack_ptr = cl_iter_link(s_stack_ptr);
   return res;
+#endif
 }
 
 static int empty_stack(void) {
-  return (s_stack_ptr == 0);
+#ifdef R05_COMPACT_HANDLES
+  return s_call_stack_size == 0;
+#else
+  return cl_iter_is_null(s_stack_ptr);
+#endif
 }
 
 
 extern struct r05_function r05f_GO;
 
 static void init_view_field(void) {
-  struct r05_node *open, *close;
+  cl_iter_t open, close;
 
   r05_reset_allocator();
   r05_alloc_open_call(&open);
@@ -879,11 +1133,15 @@ static void init_view_field(void) {
   r05_alloc_close_call(&close);
   r05_push_stack(close);
   r05_push_stack(open);
+#ifdef R05_COMPACT_HANDLES
+  r05_splice_from_freelist(crs_view_end(&s_compact_storage));
+#else
   r05_splice_from_freelist(s_begin_view_field.next);
+#endif
 }
 
-static struct r05_node *s_arg_begin;
-static struct r05_node *s_arg_end;
+static cl_iter_t s_arg_begin;
+static cl_iter_t s_arg_end;
 
 static void main_loop(void) {
 #ifdef R05_PROFILER
@@ -891,7 +1149,7 @@ static void main_loop(void) {
 #endif  /* R05_PROFILER */
 
   while (! empty_stack()) {
-    struct r05_node *function;
+    cl_iter_t function;
     struct r05_function *callee;
 
     s_arg_begin = pop_stack();
@@ -904,10 +1162,25 @@ static void main_loop(void) {
     }
 #endif  /* R05_SHOW_DEBUG */
 
-    function = s_arg_begin->next;
-    if (R05_DATATAG_FUNCTION == function->tag) {
-      callee = function->info.function;
+    function = cl_iter_next(s_arg_begin);
+    if (R05_DATATAG_FUNCTION == cl_iter_tag(function)) {
+      callee = cl_iter_function(function);
+#ifdef R05_TRACE_PROGRESS
+      fprintf(stderr, "step %lu enter %s\n", s_step_counter, callee->name);
+#endif
+#ifdef R05_TRACE_STACK
+      fprintf(stderr, "STACK call %s\n", callee->name);
+#endif
+#ifdef R05_COMPACT_HANDLES
+      cl_iter_frame_begin();
+#endif
       (callee->ptr)(s_arg_begin, s_arg_end);
+#ifdef R05_TRACE_PROGRESS
+      fprintf(stderr, "step %lu leave %s\n", s_step_counter, callee->name);
+#endif
+#ifdef R05_COMPACT_HANDLES
+      cl_iter_frame_end();
+#endif
     } else {
       r05_recognition_impossible();
     }
@@ -925,6 +1198,11 @@ static void main_loop(void) {
 #endif  /* R05_PROFILER */
 
     ++ s_step_counter;
+#ifdef R05_TRACE_PROGRESS
+    if (s_step_counter % 1000 == 0) {
+      fprintf(stderr, "progress: %lu steps\n", s_step_counter);
+    }
+#endif
   }
 }
 
@@ -974,11 +1252,13 @@ static int is_ident_name(const char *name) {
 }
 
 static const char escapes[][2] = {
-  "\tt", "\nn", "\rr", "\"\"", "''", "((", "))", "<<", ">>", "\\\\", "\0\0",
+  { '\t', 't' }, { '\n', 'n' }, { '\r', 'r' }, { '"', '"' },
+  { '\'', '\'' }, { '(', '(' }, { ')', ')' }, { '<', '<' },
+  { '>', '>' }, { '\\', '\\' }, { '\0', '\0' },
 };
 
 
-static void print_seq(struct r05_node *begin, struct r05_node *end) {
+static void print_seq(cl_iter_t begin, cl_iter_t end) {
   enum {
     cStateView = 100,
     cStateString,
@@ -989,7 +1269,7 @@ static void print_seq(struct r05_node *begin, struct r05_node *end) {
   int after_bracket = 0;
   int reset_after_bracket = 1;
 
-  while ((state != cStateFinish) && end->next != begin) {
+  while ((state != cStateFinish) && ! cl_iter_eq(cl_iter_next(end), begin)) {
     if (reset_after_bracket) {
       after_bracket = 0;
       reset_after_bracket = 0;
@@ -1001,17 +1281,17 @@ static void print_seq(struct r05_node *begin, struct r05_node *end) {
 
     switch (state) {
       case cStateView:
-        switch (begin->tag) {
+        switch (cl_iter_tag(begin)) {
           case R05_DATATAG_ILLEGAL:
-            if (0 == begin->prev) {
+            if (cl_iter_is_null(cl_iter_prev(begin))) {
               fprintf(stderr, "[FIRST] ");
-            } else if (0 == begin->next) {
+            } else if (cl_iter_is_null(cl_iter_next(begin))) {
               fprintf(stderr, "\n[LAST]");
               state = cStateFinish;
             } else {
               fprintf(stderr, "\n[NONE]");
             }
-            begin = begin->next;
+            begin = cl_iter_next(begin);
             continue;
 
           case R05_DATATAG_CHAR:
@@ -1020,17 +1300,17 @@ static void print_seq(struct r05_node *begin, struct r05_node *end) {
             continue;
 
           case R05_DATATAG_NUMBER:
-            fprintf(stderr, "%u ", begin->info.number);
-            begin = begin->next;
+            fprintf(stderr, "%u ", cl_iter_number(begin));
+            begin = cl_iter_next(begin);
             continue;
 
           case R05_DATATAG_FUNCTION:
-            if (is_ident_name(begin->info.function->name)) {
-              fprintf(stderr, "%s ", begin->info.function->name);
+            if (is_ident_name(cl_iter_function(begin)->name)) {
+              fprintf(stderr, "%s ", cl_iter_function(begin)->name);
             } else {
               const char *p;
               fprintf(stderr, "\"");
-              for (p = begin->info.function->name; *p != 0; ++p) {
+              for (p = cl_iter_function(begin)->name; *p != 0; ++p) {
                 size_t i = 0;
                 while (escapes[i][0] != '\0' && escapes[i][0] != *p) {
                   ++i;
@@ -1045,7 +1325,7 @@ static void print_seq(struct r05_node *begin, struct r05_node *end) {
               }
               fprintf(stderr, "\" ");
             }
-            begin = begin->next;
+            begin = cl_iter_next(begin);
             continue;
 
           case R05_DATATAG_OPEN_BRACKET:
@@ -1056,13 +1336,13 @@ static void print_seq(struct r05_node *begin, struct r05_node *end) {
             after_bracket = 1;
             reset_after_bracket = 0;
             fprintf(stderr, "(");
-            begin = begin->next;
+            begin = cl_iter_next(begin);
             continue;
 
           case R05_DATATAG_CLOSE_BRACKET:
             --indent;
             fprintf(stderr, ")");
-            begin = begin->next;
+            begin = cl_iter_next(begin);
             continue;
 
           case R05_DATATAG_OPEN_CALL:
@@ -1073,23 +1353,23 @@ static void print_seq(struct r05_node *begin, struct r05_node *end) {
             after_bracket = 1;
             reset_after_bracket = 0;
             fprintf(stderr, "<");
-            begin = begin->next;
+            begin = cl_iter_next(begin);
             continue;
 
           case R05_DATATAG_CLOSE_CALL:
             --indent;
             fprintf(stderr, ">");
-            begin = begin->next;
+            begin = cl_iter_next(begin);
             continue;
 
           default:
-            r05_switch_default_violation(begin->tag);
+            r05_switch_default_violation(cl_iter_tag(begin));
         }
 
       case cStateString:
-        switch (begin->tag) {
+        switch (cl_iter_tag(begin)) {
           case R05_DATATAG_CHAR: {
-            unsigned char ch = begin->info.char_;
+            unsigned char ch = cl_iter_char(begin);
             switch (ch) {
               case '(': case ')':
               case '<': case '>':
@@ -1120,7 +1400,7 @@ static void print_seq(struct r05_node *begin, struct r05_node *end) {
                 }
                 break;
               }
-              begin = begin->next;
+              begin = cl_iter_next(begin);
               continue;
             }
 
@@ -1151,7 +1431,17 @@ static void make_dump(void) {
   fprintf(stderr, "\nPRIMARY ACTIVE EXPRESSION:\n");
   print_seq(s_arg_begin, s_arg_end);
   fprintf(stderr, "\nVIEW FIELD:\n");
+#ifdef R05_COMPACT_HANDLES
+  {
+    cl_iter_t begin = crs_view_begin(&s_compact_storage);
+    cl_iter_t tail = crs_view_end(&s_compact_storage);
+    if (! cl_iter_eq(begin, tail)) {
+      print_seq(begin, cl_iter_prev(tail));
+    }
+  }
+#else
   print_seq(&s_begin_view_field, &s_end_view_field);
+#endif
 
   dump_buried();
 
@@ -1165,6 +1455,134 @@ static void make_dump(void) {
 }
 
 
+#ifdef R05_COMPACT_LIST
+static size_t compact_realistic_bytes(size_t n) {
+  size_t cap;
+  if (n == 0) {
+    return 2 * sizeof(cm_macronode_t);
+  }
+  cap = CM_MIN_BUCKET;
+  while (cap < n) cap *= 2;
+  return sizeof(cm_macronode_t) + cap * sizeof(cm_item_t)
+       + 2 * sizeof(cm_macronode_t);
+}
+
+static void r05_compact_view_field_stats(void) {
+  size_t peak   = s_compact_peak_nodes;
+  size_t steps  = s_compact_step_count;
+  size_t avg    = (steps > 0) ? (s_compact_total_nodes / steps) : 0;
+
+  size_t classic_peak  = peak * sizeof(struct r05_node)
+                       + 2 * sizeof(struct r05_node);
+  size_t ideal_peak    = sizeof(cm_macronode_t) + peak * sizeof(cm_item_t)
+                       + 2 * sizeof(cm_macronode_t);
+  size_t realistic_peak = compact_realistic_bytes(peak);
+
+  size_t classic_avg   = avg * sizeof(struct r05_node)
+                       + 2 * sizeof(struct r05_node);
+  size_t ideal_avg     = sizeof(cm_macronode_t) + avg * sizeof(cm_item_t)
+                       + 2 * sizeof(cm_macronode_t);
+  size_t realistic_avg = compact_realistic_bytes(avg);
+
+  fprintf(stderr,
+    "Compact list representation stats:\n"
+    "  sizeof(r05_node)       = %lu bytes  (prev+next+tag+info)\n"
+    "  sizeof(cm_item_t)      = %lu bytes  (tag+info, no pointers)\n"
+    "  sizeof(cm_macronode_t) = %lu bytes  (header overhead per macronode)\n"
+    "  CM_MIN_BUCKET          = %d  (reserve policy)\n"
+    "  Steps measured         : %lu\n"
+    "  Peak view field        : %lu nodes\n"
+    "    classic              : %lu B\n"
+    "    compact (ideal)      : %lu B  (saved %+ld B, %d%%)\n"
+    "    compact (realistic)  : %lu B  (saved %+ld B, %d%%)\n"
+    "  Avg  view field        : %lu nodes\n"
+    "    classic              : %lu B\n"
+    "    compact (ideal)      : %lu B  (saved %+ld B, %d%%)\n"
+    "    compact (realistic)  : %lu B  (saved %+ld B, %d%%)\n",
+    (unsigned long)sizeof(struct r05_node),
+    (unsigned long)sizeof(cm_item_t),
+    (unsigned long)sizeof(cm_macronode_t),
+    CM_MIN_BUCKET,
+    (unsigned long)steps,
+    (unsigned long)peak,
+    (unsigned long)classic_peak,
+    (unsigned long)ideal_peak,
+    (long)classic_peak - (long)ideal_peak,
+    classic_peak > 0 ? (int)(100 - 100 * ideal_peak / classic_peak) : 0,
+    (unsigned long)realistic_peak,
+    (long)classic_peak - (long)realistic_peak,
+    classic_peak > 0 ? (int)(100 - 100 * realistic_peak / classic_peak) : 0,
+    (unsigned long)avg,
+    (unsigned long)classic_avg,
+    (unsigned long)ideal_avg,
+    (long)classic_avg - (long)ideal_avg,
+    classic_avg > 0 ? (int)(100 - 100 * ideal_avg / classic_avg) : 0,
+    (unsigned long)realistic_avg,
+    (long)classic_avg - (long)realistic_avg,
+    classic_avg > 0 ? (int)(100 - 100 * realistic_avg / classic_avg) : 0
+  );
+}
+#endif  /* R05_COMPACT_LIST */
+
+
+#ifdef R05_COMPACT_HANDLES
+static void r05_compact_storage_stats(void) {
+  cm_stats_t view = cm_list_stats(&s_compact_storage.view);
+  cm_stats_t build = cm_list_stats(&s_compact_storage.build);
+  cm_stats_t buried = cm_list_stats(&s_compact_storage.buried);
+  size_t lists_bytes = view.compact_bytes
+    + build.compact_bytes + buried.compact_bytes;
+  size_t handles_bytes = cl_iter_table_capacity_bytes();
+  size_t stack_bytes = s_call_stack_capacity * sizeof(s_call_stack[0]);
+  size_t compact_bytes = lists_bytes + handles_bytes + stack_bytes;
+  size_t classic_bytes = view.classic_bytes
+    + build.classic_bytes + buried.classic_bytes;
+  long saved = (long) classic_bytes - (long) compact_bytes;
+  int percent = classic_bytes == 0
+    ? 0 : (int) (100 - 100 * compact_bytes / classic_bytes);
+  long peak_saved = (long) s_compact_peak_classic_bytes
+    - (long) s_compact_peak_total_bytes;
+  int peak_percent = s_compact_peak_classic_bytes == 0
+    ? 0 : (int) (
+      100 - 100 * s_compact_peak_total_bytes / s_compact_peak_classic_bytes
+    );
+
+  fprintf(
+    stderr,
+    "Compact runtime storage stats:\n"
+    "  elements             : view=%d build=%d buried=%d\n"
+    "  macronodes           : view=%d build=%d buried=%d\n"
+    "  compact lists        : %lu B\n"
+    "  handle table         : %lu B (slot=%lu B, peak-live=%lu)\n"
+    "  call stack capacity  : %lu B\n"
+    "  compact total        : %lu B\n"
+    "  classic equivalent   : %lu B\n"
+    "  saved current        : %+ld B (%d%%)\n"
+    "  peak elements        : %lu\n"
+    "  peak compact lists   : %lu B\n"
+    "  peak compact total   : %lu B\n"
+    "  peak classic equiv.  : %lu B\n"
+    "  saved at peak        : %+ld B (%d%%)\n",
+    view.total_elements, build.total_elements, buried.total_elements,
+    view.total_macronodes, build.total_macronodes, buried.total_macronodes,
+    (unsigned long) lists_bytes,
+    (unsigned long) handles_bytes,
+    (unsigned long) cl_iter_table_slot_size(),
+    (unsigned long) cl_iter_table_peak_slots(),
+    (unsigned long) stack_bytes,
+    (unsigned long) compact_bytes,
+    (unsigned long) classic_bytes,
+    saved, percent,
+    (unsigned long) s_compact_peak_elements,
+    (unsigned long) s_compact_peak_lists_bytes,
+    (unsigned long) s_compact_peak_total_bytes,
+    (unsigned long) s_compact_peak_classic_bytes,
+    peak_saved, peak_percent
+  );
+}
+#endif  /* R05_COMPACT_HANDLES */
+
+
 R05_NORETURN void r05_exit(int retcode) {
   dump_buried();
   fflush(stderr);
@@ -1173,6 +1591,12 @@ R05_NORETURN void r05_exit(int retcode) {
 
 #ifdef R05_SHOW_STAT
   fprintf(stderr, "Step count %lu\n", s_step_counter);
+#ifdef R05_COMPACT_LIST
+  r05_compact_view_field_stats();
+#endif  /* R05_COMPACT_LIST */
+#ifdef R05_COMPACT_HANDLES
+  r05_compact_storage_stats();
+#endif  /* R05_COMPACT_HANDLES */
 #endif  /* R05_SHOW_STAT */
 
   free_memory();
@@ -1237,6 +1661,7 @@ R05_NORETURN void r05_switch_default_violation_impl(
 ==============================================================================*/
 
 
+#ifndef R05_COMPACT_HANDLES
 static struct r05_node s_end_buried;
 
 static struct r05_node s_begin_buried = {
@@ -1245,36 +1670,43 @@ static struct r05_node s_begin_buried = {
 static struct r05_node s_end_buried = {
   &s_begin_buried, 0, R05_DATATAG_ILLEGAL, { '\0' }
 };
+#endif
 
 
 struct buried_query {
-  struct r05_node *left_bracket;
-  struct r05_node *right_bracket;
-  struct r05_node *value[2];
+  cl_iter_t left_bracket;
+  cl_iter_t right_bracket;
+  cl_iter_t value[2];
 };
 
-static int buried_query(struct buried_query *res, struct r05_node *key[]) {
-  struct r05_node *buried_begin = s_begin_buried.next;
-  struct r05_node *left_bracket, *right_bracket, *eq;
+static int buried_query(struct buried_query *res, cl_iter_t key[]) {
+#ifdef R05_COMPACT_HANDLES
+  cl_iter_t buried_begin = crs_buried_begin(&s_compact_storage);
+  cl_iter_t buried_end = crs_buried_end(&s_compact_storage);
+#else
+  cl_iter_t buried_begin = s_begin_buried.next;
+  cl_iter_t buried_end = &s_end_buried;
+#endif
+  cl_iter_t left_bracket, right_bracket, eq;
   int found = 0;
 
-  while (buried_begin != &s_end_buried && ! found) {
-    struct r05_node *rep_key[2];
+  while (! cl_iter_eq(buried_begin, buried_end) && ! found) {
+    cl_iter_t rep_key[2];
 
     left_bracket = buried_begin;
-    right_bracket = left_bracket->info.link;
+    right_bracket = cl_iter_link(left_bracket);
 
     found = r05_repeated_evar_left(rep_key, left_bracket, right_bracket, key)
       && r05_char_left(&eq, rep_key[1], right_bracket, '=');
 
-    buried_begin = right_bracket->next;
+    buried_begin = cl_iter_next(right_bracket);
   }
 
   if (found) {
     res->left_bracket = left_bracket;
     res->right_bracket = right_bracket;
-    res->value[0] = eq->next;
-    res->value[1] = right_bracket->prev;
+    res->value[0] = cl_iter_next(eq);
+    res->value[1] = cl_iter_prev(right_bracket);
   }
 
   return found;
@@ -1284,32 +1716,38 @@ static int buried_query(struct buried_query *res, struct r05_node *key[]) {
 enum brrp_behavior { BRRP_BR, BRRP_RP };
 
 static void brrp_impl(
-  struct r05_node *arg_begin, struct r05_node *arg_end,
+  cl_iter_t arg_begin, cl_iter_t arg_end,
   enum brrp_behavior behavior
 ) {
-  struct r05_node *callee = arg_begin->next;
-  struct r05_node *key[2], *eq;
+  cl_iter_t callee = cl_iter_next(arg_begin);
+  cl_iter_t key[2], eq;
 
-  key[0] = callee->next;
-  key[1] = key[0]->prev;
+  key[0] = cl_iter_next(callee);
+  key[1] = cl_iter_prev(key[0]);
   do {
     if (r05_char_left(&eq, key[1], arg_end, '=')) {
       struct buried_query query;
 
       if (BRRP_RP == behavior && buried_query(&query, key)) {
-        struct r05_node *val[2];
+        cl_iter_t val[2];
         r05_close_evar(val, eq, arg_end);
         r05_correct_evar(val);
         r05_correct_evar(query.value);
         r05_splice_tevar(query.right_bracket, val);
         r05_splice_tevar(arg_end, query.value);
       } else {
-        struct r05_node *left_bracket = callee;
-        struct r05_node *right_bracket = arg_end;
-        left_bracket->tag = R05_DATATAG_OPEN_BRACKET;
-        right_bracket->tag = R05_DATATAG_CLOSE_BRACKET;
+        cl_iter_t left_bracket = callee;
+        cl_iter_t right_bracket = arg_end;
+        cl_iter_set_tag(left_bracket, R05_DATATAG_OPEN_BRACKET);
+        cl_iter_set_tag(right_bracket, R05_DATATAG_CLOSE_BRACKET);
         r05_link_brackets(left_bracket, right_bracket);
+#ifdef R05_COMPACT_HANDLES
+        crs_splice_before(
+          crs_buried_begin(&s_compact_storage), left_bracket, right_bracket
+        );
+#else
         list_splice(s_begin_buried.next, left_bracket, right_bracket);
+#endif
         arg_end = arg_begin;
       }
       r05_splice_to_freelist(arg_begin, arg_end);
@@ -1324,15 +1762,15 @@ static void brrp_impl(
 enum dgcp_behavior { DGCP_DG, DGCP_CP };
 
 static void dgcp_impl(
-  struct r05_node *arg_begin, struct r05_node *arg_end,
+  cl_iter_t arg_begin, cl_iter_t arg_end,
   enum dgcp_behavior behavior
 ) {
-  struct r05_node *key[2];
+  cl_iter_t key[2];
   struct buried_query query;
   int found;
 
-  key[0] = arg_begin->next->next;
-  key[1] = arg_end->prev;
+  key[0] = cl_iter_next(cl_iter_next(arg_begin));
+  key[1] = cl_iter_prev(arg_end);
   r05_reset_allocator();
 
   found = buried_query(&query, key);
@@ -1352,19 +1790,19 @@ static void dgcp_impl(
 }
 
 
-void r05_br(struct r05_node *arg_begin, struct r05_node *arg_end) {
+void r05_br(cl_iter_t arg_begin, cl_iter_t arg_end) {
   brrp_impl(arg_begin, arg_end, BRRP_BR);
 }
 
-void r05_dg(struct r05_node *arg_begin, struct r05_node *arg_end) {
+void r05_dg(cl_iter_t arg_begin, cl_iter_t arg_end) {
   dgcp_impl(arg_begin, arg_end, DGCP_DG);
 }
 
-void r05_cp(struct r05_node *arg_begin, struct r05_node *arg_end) {
+void r05_cp(cl_iter_t arg_begin, cl_iter_t arg_end) {
   dgcp_impl(arg_begin, arg_end, DGCP_CP);
 }
 
-void r05_rp(struct r05_node *arg_begin, struct r05_node *arg_end) {
+void r05_rp(cl_iter_t arg_begin, cl_iter_t arg_end) {
   brrp_impl(arg_begin, arg_end, BRRP_RP);
 }
 
@@ -1372,7 +1810,17 @@ void r05_rp(struct r05_node *arg_begin, struct r05_node *arg_end) {
 static void dump_buried(void) {
 #ifdef R05_DUMP_BURIED
   fprintf(stderr, "\nBURIED:\n");
+#ifdef R05_COMPACT_HANDLES
+  {
+    cl_iter_t begin = crs_buried_begin(&s_compact_storage);
+    cl_iter_t tail = crs_buried_end(&s_compact_storage);
+    if (! cl_iter_eq(begin, tail)) {
+      print_seq(begin, cl_iter_prev(tail));
+    }
+  }
+#else
   print_seq(&s_begin_buried, &s_end_buried);
+#endif
 #endif  /* ifdef R05_DUMP_BURIED */
 }
 

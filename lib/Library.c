@@ -38,7 +38,7 @@ struct static_asserts {
 
 #define DEFINE_ALIAS(name, rep, origin) \
   static void r05c_ ## origin( \
-    struct r05_node *arg_begin, struct r05_node *arg_end \
+    cl_iter_t arg_begin, cl_iter_t arg_end \
   ); \
   ALIAS_DESCRIPTOR(name, rep, r05c_ ## origin)
 
@@ -65,11 +65,12 @@ struct builtin_info {
   struct r05_function *type;
 };
 
-static struct builtin_info s_builtin_info[];
+// Fix tentative definition for MSVC, keep during merge
+static struct builtin_info s_builtin_info[100];
 
 
 static int chain_str_eq(
-  struct r05_node *begin, struct r05_node *end, const char *name
+  cl_iter_t begin, cl_iter_t end, const char *name
 );
 
 
@@ -77,36 +78,36 @@ static int chain_str_eq(
    1. <Mu s.Func e.Arg> == <s.Func e.Arg>
 */
 R05_IMPLEMENT_METAFUNCTION(Mu, "Mu") {
-  struct r05_node *mu = arg_begin->next;
-  struct r05_node *callable = mu->next;
-  struct r05_metatable *metatable = mu->info.function->metatable;
+  cl_iter_t mu = cl_iter_next(arg_begin);
+  cl_iter_t callable = cl_iter_next(mu);
+  struct r05_metatable *metatable = cl_iter_function(mu)->metatable;
   struct r05_function **cur, **end;
-  struct r05_node *brackets[2];
+  cl_iter_t brackets[2];
 
   assert(metatable != NULL);
   cur = metatable->functions;
   end = metatable->functions + metatable->size;
 
-  if (R05_DATATAG_FUNCTION == callable->tag) {
-    const char *name = callable->info.function->name;
+  if (R05_DATATAG_FUNCTION == cl_iter_tag(callable)) {
+    const char *name = cl_iter_function(callable)->name;
     while (cur < end && strcmp((*cur)->name, name) != 0) {
       ++cur;
     }
     if (cur < end) {
-      callable->info.function = *cur;
-    } else if (! callable->info.function->entry) {
+      cl_iter_set_function(callable, *cur);
+    } else if (! cl_iter_function(callable)->entry) {
       r05_recognition_impossible();
     }
     r05_splice_to_freelist(mu, mu);
-  } else if (R05_DATATAG_CHAR == callable->tag) {
-    char name = callable->info.char_;
+  } else if (R05_DATATAG_CHAR == cl_iter_tag(callable)) {
+    char name = cl_iter_char(callable);
     struct r05_function **alias = s_arithmetic_names;
     while (*alias != NULL && (*alias)->name[0] != name) {
       ++alias;
     }
 
     if (*alias != NULL) {
-      mu->info.function = *alias;
+      cl_iter_set_function(mu, *alias);
     } else {
       while (
         cur < end && ((*cur)->name[0] != name || (*cur)->name[1] != '\0')
@@ -114,7 +115,7 @@ R05_IMPLEMENT_METAFUNCTION(Mu, "Mu") {
         ++cur;
       }
       if (cur < end) {
-        mu->info.function = *cur;
+        cl_iter_set_function(mu, *cur);
       } else {
         r05_recognition_impossible();
       }
@@ -122,19 +123,19 @@ R05_IMPLEMENT_METAFUNCTION(Mu, "Mu") {
     r05_splice_to_freelist(callable, callable);
   } else if (
     r05_brackets_left(brackets, mu, arg_end)
-    && brackets[0]->next != brackets[1]
+    && ! cl_iter_eq(cl_iter_next(brackets[0]), brackets[1])
   ) {
-    struct r05_node *p = brackets[0]->next;
-    struct r05_node *name_b = brackets[0]->next;
-    struct r05_node *name_e = brackets[1]->prev;
+    cl_iter_t p = cl_iter_next(brackets[0]);
+    cl_iter_t name_b = cl_iter_next(brackets[0]);
+    cl_iter_t name_e = cl_iter_prev(brackets[1]);
     struct r05_function *callee = NULL;
     struct builtin_info *bi = s_builtin_info;
     struct r05_function **alias = s_arithmetic_names;
 
-    while (p != brackets[1] && R05_DATATAG_CHAR == p->tag) {
-      p = p->next;
+    while (! cl_iter_eq(p, brackets[1]) && R05_DATATAG_CHAR == cl_iter_tag(p)) {
+      p = cl_iter_next(p);
     }
-    if (p != brackets[1]) {
+    if (! cl_iter_eq(p, brackets[1])) {
       r05_recognition_impossible();
     }
 
@@ -164,7 +165,7 @@ R05_IMPLEMENT_METAFUNCTION(Mu, "Mu") {
     }
 
     if (callee) {
-      mu->info.function = callee;
+      cl_iter_set_function(mu, callee);
     } else {
       r05_recognition_impossible();
     }
@@ -184,34 +185,34 @@ struct signed_number {
 };
 
 
-static struct r05_node *parse_signed_number(
-  struct signed_number *sn, struct r05_node *p
+static cl_iter_t parse_signed_number(
+  struct signed_number *sn, cl_iter_t p
 ) {
-  if (R05_DATATAG_CHAR == p->tag) {
-    if ('-' == p->info.char_) {
+  if (R05_DATATAG_CHAR == cl_iter_tag(p)) {
+    if ('-' == cl_iter_char(p)) {
       sn->sign = -1;
-    } else if ('+' == p->info.char_) {
+    } else if ('+' == cl_iter_char(p)) {
       sn->sign = +1;
     } else {
       r05_recognition_impossible();
     }
 
-    p = p->next;
+    p = cl_iter_next(p);
   } else {
     sn->sign = +1;
   }
 
-  if (R05_DATATAG_NUMBER != p->tag) {
+  if (R05_DATATAG_NUMBER != cl_iter_tag(p)) {
     r05_recognition_impossible();
   }
 
-  sn->value = p->info.number;
+  sn->value = cl_iter_number(p);
 
   if (0 == sn->value) {
     sn->sign = +1;
   }
 
-  return p->next;
+  return cl_iter_next(p);
 }
 
 
@@ -221,29 +222,29 @@ struct arithm_arg {
 
 
 static void parse_arithm_arg(
-  struct arithm_arg *aa, struct r05_node *arg_begin, struct r05_node *arg_end
+  struct arithm_arg *aa, cl_iter_t arg_begin, cl_iter_t arg_end
 ) {
-  struct r05_node *func_name, *p;
+  cl_iter_t func_name, p;
 
-  func_name = arg_begin->next;
-  p = func_name->next;
+  func_name = cl_iter_next(arg_begin);
+  p = cl_iter_next(func_name);
 
-  if (R05_DATATAG_OPEN_BRACKET == p->tag) {
-    p = p->next;
+  if (R05_DATATAG_OPEN_BRACKET == cl_iter_tag(p)) {
+    p = cl_iter_next(p);
     p = parse_signed_number(&aa->x, p);
 
-    if (R05_DATATAG_CLOSE_BRACKET != p->tag) {
+    if (R05_DATATAG_CLOSE_BRACKET != cl_iter_tag(p)) {
       r05_recognition_impossible();
     }
 
-    p = p->next;
+    p = cl_iter_next(p);
   } else {
     p = parse_signed_number(&aa->x, p);
   }
 
   p = parse_signed_number(&aa->y, p);
 
-  if (p != arg_end) {
+  if (! cl_iter_eq(p, arg_end)) {
     r05_recognition_impossible();
   }
 }
@@ -258,7 +259,7 @@ static void parse_arithm_arg(
 */
 static void add(
   const struct arithm_arg *aa,
-  struct r05_node *arg_begin, struct r05_node *arg_end
+  cl_iter_t arg_begin, cl_iter_t arg_end
 );
 
 
@@ -270,23 +271,23 @@ R05_DEFINE_ENTRY_FUNCTION(Add, "Add") {
 }
 
 
-static struct r05_node *emplace_number(
-  struct signed_number res, r05_number high, struct r05_node *p
+static cl_iter_t emplace_number(
+  struct signed_number res, r05_number high, cl_iter_t p
 ) {
   if (res.sign < 0) {
-    p->tag = R05_DATATAG_CHAR;
-    p->info.char_ = '-';
-    p = p->next;
+    cl_iter_set_tag(p, R05_DATATAG_CHAR);
+    cl_iter_set_char(p, '-');
+    p = cl_iter_next(p);
   }
 
   if (high) {
-    p->tag = R05_DATATAG_NUMBER;
-    p->info.number = high;
-    p = p->next;
+    cl_iter_set_tag(p, R05_DATATAG_NUMBER);
+    cl_iter_set_number(p, high);
+    p = cl_iter_next(p);
   }
 
-  p->tag = R05_DATATAG_NUMBER;
-  p->info.number = res.value;
+  cl_iter_set_tag(p, R05_DATATAG_NUMBER);
+  cl_iter_set_number(p, res.value);
   return p;
 }
 
@@ -294,11 +295,11 @@ static struct r05_node *emplace_number(
 
 static void add(
   const struct arithm_arg *aa,
-  struct r05_node *arg_begin, struct r05_node *arg_end
+  cl_iter_t arg_begin, cl_iter_t arg_end
 ) {
   struct signed_number res;
   r05_number carry = 0;
-  struct r05_node *p = arg_begin;
+  cl_iter_t p = arg_begin;
 
   if (aa->x.sign == aa->y.sign) {
     res.sign = aa->x.sign;
@@ -318,7 +319,7 @@ static void add(
   }
 
   p = emplace_number(res, carry, p);
-  r05_splice_to_freelist(p->next, arg_end);
+  r05_splice_to_freelist(cl_iter_next(p), arg_end);
 }
 
 
@@ -329,19 +330,19 @@ static void add(
       e.Argument ::= s.CHAR*
 */
 R05_DEFINE_ENTRY_FUNCTION(Arg, "Arg") {
-  struct r05_node *callable = arg_begin->next;
-  struct r05_node *parg_no = callable->next;
+  cl_iter_t callable = cl_iter_next(arg_begin);
+  cl_iter_t parg_no = cl_iter_next(callable);
   int arg_no;
 
   if (
-    parg_no == arg_end
-    || R05_DATATAG_NUMBER != parg_no->tag
-    || parg_no->next != arg_end
+    cl_iter_eq(parg_no, arg_end)
+    || R05_DATATAG_NUMBER != cl_iter_tag(parg_no)
+    || ! cl_iter_eq(cl_iter_next(parg_no), arg_end)
   ) {
     r05_recognition_impossible();
   }
 
-  arg_no = (int) parg_no->info.number;
+  arg_no = (int) cl_iter_number(parg_no);
 
   r05_reset_allocator();
   r05_alloc_string(r05_arg(arg_no));
@@ -362,9 +363,9 @@ ALIAS_DESCRIPTOR(Br, "Br", r05_br);
 static void read_from_stream(FILE *input);
 
 R05_DEFINE_ENTRY_FUNCTION(Card, "Card") {
-  struct r05_node *callee = arg_begin->next;
+  cl_iter_t callee = cl_iter_next(arg_begin);
 
-  if (callee->next != arg_end) {
+  if (! cl_iter_eq(cl_iter_next(callee), arg_end)) {
     r05_recognition_impossible();
   }
 
@@ -394,15 +395,15 @@ static void read_from_stream(FILE *input) {
    В e.Expr’ все числа заменены на литеры с соответствующими кодами
 */
 R05_DEFINE_ENTRY_FUNCTION(Chr, "Chr") {
-  struct r05_node *callee = arg_begin->next;
-  struct r05_node *p = callee->next;
+  cl_iter_t callee = cl_iter_next(arg_begin);
+  cl_iter_t p = cl_iter_next(callee);
 
-  while (p != arg_end) {
-    if (p->tag == R05_DATATAG_NUMBER) {
-      p->tag = R05_DATATAG_CHAR;
-      p->info.char_ = (unsigned char) p->info.number;
+  while (! cl_iter_eq(p, arg_end)) {
+    if (cl_iter_tag(p) == R05_DATATAG_NUMBER) {
+      cl_iter_set_tag(p, R05_DATATAG_CHAR);
+      cl_iter_set_char(p, (unsigned char) cl_iter_number(p));
     }
-    p = p->next;
+    p = cl_iter_next(p);
   }
 
   r05_splice_to_freelist(arg_begin, callee);
@@ -445,12 +446,12 @@ void divmod(const struct arithm_arg *aa, struct divmod *res) {
 R05_DEFINE_ENTRY_FUNCTION(Div, "Div") {
   struct arithm_arg arg;
   struct divmod res;
-  struct r05_node *p = arg_begin;
+  cl_iter_t p = arg_begin;
 
   parse_arithm_arg(&arg, arg_begin, arg_end);
   divmod(&arg, &res);
   p = emplace_number(res.div, 0, p);
-  r05_splice_to_freelist(p->next, arg_end);
+  r05_splice_to_freelist(cl_iter_next(p), arg_end);
 }
 
 
@@ -460,18 +461,18 @@ R05_DEFINE_ENTRY_FUNCTION(Div, "Div") {
 R05_DEFINE_ENTRY_FUNCTION(Divmod, "Divmod") {
   struct arithm_arg arg;
   struct divmod res;
-  struct r05_node *open = arg_begin, *close, *p;
+  cl_iter_t open = arg_begin, close, p;
 
   parse_arithm_arg(&arg, arg_begin, arg_end);
   divmod(&arg, &res);
-  open->tag = R05_DATATAG_OPEN_BRACKET;
-  close = emplace_number(res.div, 0, open->next)->next;
-  close->tag = R05_DATATAG_CLOSE_BRACKET;
+  cl_iter_set_tag(open, R05_DATATAG_OPEN_BRACKET);
+  close = cl_iter_next(emplace_number(res.div, 0, cl_iter_next(open)));
+  cl_iter_set_tag(close, R05_DATATAG_CLOSE_BRACKET);
   r05_link_brackets(open, close);
-  p = emplace_number(res.mod, 0, close->next);
+  p = emplace_number(res.mod, 0, cl_iter_next(close));
 
-  if (p != arg_end) {
-    r05_splice_to_freelist(p->next, arg_end);
+  if (! cl_iter_eq(p, arg_end)) {
+    r05_splice_to_freelist(cl_iter_next(p), arg_end);
   }
 }
 
@@ -480,19 +481,19 @@ R05_DEFINE_ENTRY_FUNCTION(Divmod, "Divmod") {
   12. <Explode s.FUNCTION> == s.CHAR+
 */
 R05_DEFINE_ENTRY_FUNCTION(Explode, "Explode") {
-  struct r05_node *callable = arg_begin->next;
-  struct r05_node *ident = callable->next;
+  cl_iter_t callable = cl_iter_next(arg_begin);
+  cl_iter_t ident = cl_iter_next(callable);
 
   if (
-     ident == arg_end
-     || R05_DATATAG_FUNCTION != ident->tag
-     || ident->next != arg_end
+     cl_iter_eq(ident, arg_end)
+     || R05_DATATAG_FUNCTION != cl_iter_tag(ident)
+     || ! cl_iter_eq(cl_iter_next(ident), arg_end)
   ) {
     r05_recognition_impossible();
   }
 
   r05_reset_allocator();
-  r05_alloc_string(ident->info.function->name);
+  r05_alloc_string(cl_iter_function(ident)->name);
   r05_splice_from_freelist(arg_begin);
   r05_splice_to_freelist(arg_begin, arg_end);
 }
@@ -505,22 +506,23 @@ R05_DEFINE_ENTRY_FUNCTION(Explode, "Explode") {
   |e.Prefix| == s.Len || { |e.Prefix| < s.Len && |e.Suffix| == 0 }
 */
 R05_DEFINE_ENTRY_FUNCTION(First, "First") {
-  struct r05_node *sLen;
+  cl_iter_t sLen;
   r05_number counter;
-  struct r05_node *ePrefix[2];
-  struct r05_node *left_bracket, *right_bracket, *callee;
+  cl_iter_t ePrefix[2];
+  cl_iter_t left_bracket, right_bracket, callee;
 
-  callee = arg_begin->next;
+  callee = cl_iter_next(arg_begin);
 
   if (
-    ! r05_svar_left(&sLen, callee, arg_end) || sLen->tag != R05_DATATAG_NUMBER
+    ! r05_svar_left(&sLen, callee, arg_end)
+    || cl_iter_tag(sLen) != R05_DATATAG_NUMBER
   ) {
     r05_recognition_impossible();
   }
 
-  counter = sLen->info.number;
+  counter = cl_iter_number(sLen);
 
-  ePrefix[0] = sLen->next;
+  ePrefix[0] = cl_iter_next(sLen);
   ePrefix[1] = sLen;
   while (counter > 0 && r05_open_evar_advance(ePrefix, arg_end)) {
     -- counter;
@@ -529,8 +531,8 @@ R05_DEFINE_ENTRY_FUNCTION(First, "First") {
   left_bracket = callee;
   right_bracket = sLen;
 
-  left_bracket->tag = R05_DATATAG_OPEN_BRACKET;
-  right_bracket->tag = R05_DATATAG_CLOSE_BRACKET;
+  cl_iter_set_tag(left_bracket, R05_DATATAG_OPEN_BRACKET);
+  cl_iter_set_tag(right_bracket, R05_DATATAG_CLOSE_BRACKET);
   r05_link_brackets(left_bracket, right_bracket);
 
   r05_correct_evar(ePrefix);
@@ -548,19 +550,19 @@ R05_DEFINE_ENTRY_FUNCTION(First, "First") {
 FILE *open_numbered(unsigned int no, const char mode);
 
 R05_DEFINE_ENTRY_FUNCTION(Get, "Get") {
-  struct r05_node *callable = arg_begin->next;
-  struct r05_node *pfile_no = callable->next;
+  cl_iter_t callable = cl_iter_next(arg_begin);
+  cl_iter_t pfile_no = cl_iter_next(callable);
   FILE *stream;
 
   if (
-    pfile_no == arg_end
-    || R05_DATATAG_NUMBER != pfile_no->tag
-    || pfile_no->next != arg_end
+    cl_iter_eq(pfile_no, arg_end)
+    || R05_DATATAG_NUMBER != cl_iter_tag(pfile_no)
+    || ! cl_iter_eq(cl_iter_next(pfile_no), arg_end)
   ) {
     r05_recognition_impossible();
   }
 
-  stream = open_numbered((unsigned int) pfile_no->info.number, 'r');
+  stream = open_numbered((unsigned int) cl_iter_number(pfile_no), 'r');
 
   r05_reset_allocator();
   read_from_stream(stream);
@@ -578,10 +580,6 @@ enum { UINT_DIGITS = (sizeof(unsigned int) * 8 + 2) / 3 };
 FILE *open_numbered(unsigned int file_no, const char mode) {
   char mode_str[2] = "*";
 
-  /*
-    Ложное предупреждение BCC 5.5:
-    компилятор не допускает инициализацию структур и массивов переменными.
-  */
   mode_str[0] = mode;
   file_no %= FILE_LIMIT;
   if (file_no == 0 && mode == 'r') {
@@ -619,30 +617,36 @@ FILE *open_numbered(unsigned int file_no, const char mode) {
   s.Digit ::= '0' | … | '9'
 */
 static struct r05_function *implode(
-  struct r05_node *begin, struct r05_node *end
+  cl_iter_t begin, cl_iter_t end
 );
 
 
 R05_DEFINE_ENTRY_FUNCTION(Implode, "Implode") {
-  struct r05_node *sFunc, *sBegin, *sEnd;
+  cl_iter_t sFunc, sBegin, sEnd;
 
-  sFunc = arg_begin->next;
-  sBegin = sFunc->next;
+  sFunc = cl_iter_next(arg_begin);
+  sBegin = cl_iter_next(sFunc);
 
-  if (sBegin->tag != R05_DATATAG_CHAR || ! isalpha((int) sBegin->info.char_)) {
-    sFunc->tag = R05_DATATAG_NUMBER;
-    sFunc->info.number = 0;
+  if (
+    cl_iter_tag(sBegin) != R05_DATATAG_CHAR
+    || ! isalpha((int) cl_iter_char(sBegin))
+  ) {
+    cl_iter_set_tag(sFunc, R05_DATATAG_NUMBER);
+    cl_iter_set_number(sFunc, 0);
   } else {
-    sEnd = sBegin->next;
+    sEnd = cl_iter_next(sBegin);
 
 #define is_implode_tail(c) (is_ident_tail(c) || (c) == '$')
-    while (sEnd->tag == R05_DATATAG_CHAR && is_implode_tail(sEnd->info.char_)) {
-      sEnd = sEnd->next;
+    while (
+      cl_iter_tag(sEnd) == R05_DATATAG_CHAR
+      && is_implode_tail(cl_iter_char(sEnd))
+    ) {
+      sEnd = cl_iter_next(sEnd);
     }
 #undef is_implode_tail
 
-    sEnd = sEnd->prev;
-    sFunc->info.function = implode(sBegin, sEnd);
+    sEnd = cl_iter_prev(sEnd);
+    cl_iter_set_function(sFunc, implode(sBegin, sEnd));
     r05_splice_to_freelist(sBegin, sEnd);
   }
 
@@ -652,16 +656,20 @@ R05_DEFINE_ENTRY_FUNCTION(Implode, "Implode") {
 
 
 static int chain_str_eq(
-  struct r05_node *begin, struct r05_node *end, const char *name
+  cl_iter_t begin, cl_iter_t end, const char *name
 ) {
-  struct r05_node *node = begin, *limit = end->next;
+  cl_iter_t node = begin, limit = cl_iter_next(end);
   const char *pc = name;
-  while (node != limit && *pc != '\0' && *pc == node->info.char_) {
-    node = node->next;
+  while (
+    ! cl_iter_eq(node, limit)
+    && *pc != '\0'
+    && *pc == cl_iter_char(node)
+  ) {
+    node = cl_iter_next(node);
     pc++;
   }
 
-  return node == limit && *pc == '\0';
+  return cl_iter_eq(node, limit) && *pc == '\0';
 }
 
 
@@ -693,11 +701,11 @@ static void cleanup_imploded_table(void) {
 
 
 static struct r05_function *implode(
-  struct r05_node *begin, struct r05_node *end
+  cl_iter_t begin, cl_iter_t end
 ) {
   struct builtin_info *info;
   struct r05_function **alias;
-  struct r05_node *node, *limit = end->next;
+  cl_iter_t node, limit = cl_iter_next(end);
   size_t len, hash, i;
   struct imploded **bucket, *known, *new;
 
@@ -715,10 +723,10 @@ static struct r05_function *implode(
 
   len = 0;
   hash = 7369; /* просто число */
-  for (node = begin; node != limit; node = node->next) {
+  for (node = begin; ! cl_iter_eq(node, limit); node = cl_iter_next(node)) {
     len++;
     hash *= 6007; /* простое число */
-    hash += (unsigned char) node->info.char_;
+    hash += (unsigned char) cl_iter_char(node);
   }
 
   if (s_imploded == NULL) {
@@ -740,8 +748,12 @@ static struct r05_function *implode(
   new->hash = hash;
   new->next = *bucket;
 
-  for (i = 0, node = begin; node != limit; node = node->next, i++) {
-    new->name[i] = node->info.char_;
+  for (
+    i = 0, node = begin;
+    ! cl_iter_eq(node, limit);
+    node = cl_iter_next(node), i++
+  ) {
+    new->name[i] = cl_iter_char(node);
   }
   new->name[i] = '\0';
 
@@ -777,17 +789,17 @@ static struct r05_function *implode(
       s.Len ::= s.NUMBER, s.Len == |e.Expr|
 */
 R05_DEFINE_ENTRY_FUNCTION(Lenw, "Lenw") {
-  struct r05_node *sLen, *tTerm[2];
+  cl_iter_t sLen, tTerm[2];
   r05_number counter = 0;
 
-  sLen = tTerm[1] = arg_begin->next;
+  sLen = tTerm[1] = cl_iter_next(arg_begin);
 
   while (r05_tvar_left(tTerm, tTerm[1], arg_end)) {
     ++ counter;
   }
 
-  sLen->tag = R05_DATATAG_NUMBER;
-  sLen->info.number = counter;
+  cl_iter_set_tag(sLen, R05_DATATAG_NUMBER);
+  cl_iter_set_number(sLen, counter);
 
   r05_splice_to_freelist(arg_begin, arg_begin);
   r05_splice_to_freelist(arg_end, arg_end);
@@ -800,14 +812,14 @@ R05_DEFINE_ENTRY_FUNCTION(Lenw, "Lenw") {
    В e.Expr’ все литеры приведены к нижнему регистру
 */
 R05_DEFINE_ENTRY_FUNCTION(Lower, "Lower") {
-  struct r05_node *callee = arg_begin->next;
-  struct r05_node *p = callee->next;
+  cl_iter_t callee = cl_iter_next(arg_begin);
+  cl_iter_t p = cl_iter_next(callee);
 
-  while (p != arg_end) {
-    if (p->tag == R05_DATATAG_CHAR) {
-      p->info.char_ = (char) tolower(p->info.char_);
+  while (! cl_iter_eq(p, arg_end)) {
+    if (cl_iter_tag(p) == R05_DATATAG_CHAR) {
+      cl_iter_set_char(p, (char) tolower(cl_iter_char(p)));
     }
-    p = p->next;
+    p = cl_iter_next(p);
   }
 
   r05_splice_to_freelist(arg_begin, callee);
@@ -820,12 +832,12 @@ R05_DEFINE_ENTRY_FUNCTION(Lower, "Lower") {
 R05_DEFINE_ENTRY_FUNCTION(Mod, "Mod") {
   struct arithm_arg arg;
   struct divmod res;
-  struct r05_node *p = arg_begin;
+  cl_iter_t p = arg_begin;
 
   parse_arithm_arg(&arg, arg_begin, arg_end);
   divmod(&arg, &res);
   p = emplace_number(res.mod, 0, p);
-  r05_splice_to_freelist(p->next, arg_end);
+  r05_splice_to_freelist(cl_iter_next(p), arg_end);
 }
 
 
@@ -836,13 +848,12 @@ R05_DEFINE_ENTRY_FUNCTION(Mul, "Mul") {
   struct arithm_arg arg;
   struct signed_number res;
   r05_number high = 0;
-  struct r05_node *p = arg_begin;
+  cl_iter_t p = arg_begin;
 
   parse_arithm_arg(&arg, arg_begin, arg_end);
   res.sign = arg.x.sign * arg.y.sign;
   res.value = arg.x.value * arg.y.value;
 
-  /* особая логика для переполнения */
   if (arg.x.value != 0 && res.value / arg.x.value != arg.y.value) {
     r05_number x = arg.x.value, y = arg.y.value, y_low, y_high;
 
@@ -873,7 +884,7 @@ R05_DEFINE_ENTRY_FUNCTION(Mul, "Mul") {
   }
 
   p = emplace_number(res, high, p);
-  r05_splice_to_freelist(p->next, arg_end);
+  r05_splice_to_freelist(cl_iter_next(p), arg_end);
 }
 
 
@@ -887,86 +898,83 @@ R05_DEFINE_ENTRY_FUNCTION(Mul, "Mul") {
       функция возвращает 0.
 */
 R05_DEFINE_ENTRY_FUNCTION(Numb, "Numb") {
-  struct r05_node *callee = arg_begin->next;
-  struct r05_node *p = callee->next;
+  cl_iter_t callee = cl_iter_next(arg_begin);
+  cl_iter_t p = cl_iter_next(callee);
   signed sign = +1;
 
   while (
-    R05_DATATAG_CHAR == p->tag
-    && (' ' == p->info.char_ || '\t' == p->info.char_)
+    R05_DATATAG_CHAR == cl_iter_tag(p)
+    && (' ' == cl_iter_char(p) || '\t' == cl_iter_char(p))
   ) {
-    p = p->next;
+    p = cl_iter_next(p);
   }
 
-  if (R05_DATATAG_CHAR == p->tag) {
-    if ('-' == p->info.char_) {
+  if (R05_DATATAG_CHAR == cl_iter_tag(p)) {
+    if ('-' == cl_iter_char(p)) {
       sign = -1;
-      p = p->next;
-    } else if ('+' == p->info.char_) {
-      p = p->next;
+      p = cl_iter_next(p);
+    } else if ('+' == cl_iter_char(p)) {
+      p = cl_iter_next(p);
     }
   }
 
-  /* Игнорируем начальные нули */
-  while (R05_DATATAG_CHAR == p->tag && '0' == p->info.char_) {
-    p = p->next;
+  while (R05_DATATAG_CHAR == cl_iter_tag(p) && '0' == cl_iter_char(p)) {
+    p = cl_iter_next(p);
   }
 
-  if (R05_DATATAG_CHAR != p->tag || ! isdigit((int) p->info.char_)) {
-    arg_begin->tag = R05_DATATAG_NUMBER;
-    arg_begin->info.number = 0;
+  if (
+    R05_DATATAG_CHAR != cl_iter_tag(p)
+    || ! isdigit((int) cl_iter_char(p))
+  ) {
+    cl_iter_set_tag(arg_begin, R05_DATATAG_NUMBER);
+    cl_iter_set_number(arg_begin, 0);
     r05_splice_to_freelist(callee, arg_end);
   } else {
-    struct r05_node *first_digit, *target;
+    cl_iter_t first_digit, target;
     size_t ndigits;
     r05_number accum;
-    struct r05_node *first_10p, *last_10p;
+    cl_iter_t first_10p, last_10p;
 
     enum {
       BITS_PORTION = 2 * sizeof(r05_number),
       PORTION_MASK = (1 << BITS_PORTION) - 1,
     };
 
-    /* Подсчитываем число значимых цифр */
     first_digit = p;
     ndigits = 0;
-    while (R05_DATATAG_CHAR == p->tag && isdigit((int) p->info.char_)) {
-      p = p->next;
+    while (
+      R05_DATATAG_CHAR == cl_iter_tag(p)
+      && isdigit((int) cl_iter_char(p))
+    ) {
+      p = cl_iter_next(p);
       ndigits += 1;
     }
 
-    /*
-      Переводим число в систему по основанию 10 ** BITS_PORTION,
-      first_10p и last_10p — первая и последняя цифры
-    */
     accum = 0;
     p = first_digit;
-    target = first_10p = arg_begin->next;
+    target = first_10p = cl_iter_next(arg_begin);
     do {
-      accum = accum * 10 + p->info.char_ - '0';
-      p = p->next;
+      accum = accum * 10 + cl_iter_char(p) - '0';
+      p = cl_iter_next(p);
       ndigits -= 1;
       if (ndigits % BITS_PORTION == 0) {
-        /* Тег можно не устанавливать, это просто для красоты */
-        target->tag = R05_DATATAG_NUMBER;
-        target->info.number = accum;
-        target = target->next;
+        cl_iter_set_tag(target, R05_DATATAG_NUMBER);
+        cl_iter_set_number(target, accum);
+        target = cl_iter_next(target);
         accum = 0;
       }
     } while (ndigits > 0);
-    last_10p = target->prev;
+    last_10p = cl_iter_prev(target);
 
-    if (first_10p == last_10p) {
-      /* Заведомо одна макроцифра в результате */
-      if (first_10p->info.number > 0 && sign < 0) {
-        arg_begin->tag = R05_DATATAG_CHAR;
-        arg_begin->info.char_ = '-';
+    if (cl_iter_eq(first_10p, last_10p)) {
+      if (cl_iter_number(first_10p) > 0 && sign < 0) {
+        cl_iter_set_tag(arg_begin, R05_DATATAG_CHAR);
+        cl_iter_set_char(arg_begin, '-');
       } else {
-        r05_splice_to_freelist(arg_begin, first_10p->prev);
+        r05_splice_to_freelist(arg_begin, cl_iter_prev(first_10p));
       }
-      r05_splice_to_freelist(last_10p->next, arg_end);
+      r05_splice_to_freelist(cl_iter_next(last_10p), arg_end);
     } else {
-      /* Вытягиваем порции бит из [first_10p, last_10p] */
       int offset, power;
       r05_number power5 = 1;
 
@@ -974,54 +982,51 @@ R05_DEFINE_ENTRY_FUNCTION(Numb, "Numb") {
         power5 *= 25;
       }
 
-      /*
-        Пользуемся тем, что
-        (y * (10**BITS_PORTION) + x) >> BITS_PORTION
-          == y * (5**BITS_PORTION) + (x >> BITS_PORTION)
-          == y * power5 + (x >> BITS_PORTION)
-      */
-
       offset = 0;
       accum = 0;
       target = arg_end;
       do {
-          accum |= (last_10p->info.number & PORTION_MASK) << offset;
+          accum |= (cl_iter_number(last_10p) & PORTION_MASK) << offset;
 
           if (offset < 3 * BITS_PORTION) {
             offset += BITS_PORTION;
           } else {
-            target->tag = R05_DATATAG_NUMBER;
-            target->info.number = accum;
-            target = target->prev;
+            cl_iter_set_tag(target, R05_DATATAG_NUMBER);
+            cl_iter_set_number(target, accum);
+            target = cl_iter_prev(target);
             accum = 0;
             offset = 0;
           }
 
           p = last_10p;
-          while (p != first_10p) {
-            struct r05_node *prev = p->prev;
-            p->info.number =
-              (prev->info.number & PORTION_MASK) * power5
-              + (p->info.number >> BITS_PORTION);
+          while (! cl_iter_eq(p, first_10p)) {
+            cl_iter_t prev = cl_iter_prev(p);
+            cl_iter_set_number(
+              p,
+              (cl_iter_number(prev) & PORTION_MASK) * power5
+              + (cl_iter_number(p) >> BITS_PORTION)
+            );
             p = prev;
           }
-          first_10p->info.number >>= BITS_PORTION;
+          cl_iter_set_number(
+            first_10p, cl_iter_number(first_10p) >> BITS_PORTION
+          );
 
-          if (first_10p->info.number == 0) {
-            first_10p = first_10p->next;
+          if (cl_iter_number(first_10p) == 0) {
+            first_10p = cl_iter_next(first_10p);
           }
-      } while (first_10p->prev != last_10p);
+      } while (! cl_iter_eq(cl_iter_prev(first_10p), last_10p));
 
       if (accum > 0) {
-        target->tag = R05_DATATAG_NUMBER;
-        target->info.number = accum;
-        target = target->prev;
+        cl_iter_set_tag(target, R05_DATATAG_NUMBER);
+        cl_iter_set_number(target, accum);
+        target = cl_iter_prev(target);
       }
 
       if (sign < 0) {
-        target->tag = R05_DATATAG_CHAR;
-        target->info.char_ = '-';
-        target = target->prev;
+        cl_iter_set_tag(target, R05_DATATAG_CHAR);
+        cl_iter_set_char(target, '-');
+        target = cl_iter_prev(target);
       }
 
       r05_splice_to_freelist(arg_begin, target);
@@ -1041,7 +1046,7 @@ R05_DEFINE_ENTRY_FUNCTION(Numb, "Numb") {
 static void ensure_close_stream(unsigned int file_no);
 
 R05_DEFINE_ENTRY_FUNCTION(Open, "Open") {
-  struct r05_node *eFileName[2], *sMode, *sFileNo;
+  cl_iter_t eFileName[2], sMode, sFileNo;
   unsigned int file_no;
   char mode_str[2] = { '.', '\0' };
   const char *mode = mode_str;
@@ -1054,10 +1059,13 @@ R05_DEFINE_ENTRY_FUNCTION(Open, "Open") {
   size_t filename_len;
 
   if (
-    ! r05_svar_left(&sMode, arg_begin->next, arg_end)
-    || (R05_DATATAG_CHAR != sMode->tag && R05_DATATAG_FUNCTION != sMode->tag)
+    ! r05_svar_left(&sMode, cl_iter_next(arg_begin), arg_end)
+    || (
+      R05_DATATAG_CHAR != cl_iter_tag(sMode)
+      && R05_DATATAG_FUNCTION != cl_iter_tag(sMode)
+    )
     || ! r05_svar_left(&sFileNo, sMode, arg_end)
-    || R05_DATATAG_NUMBER != sFileNo->tag
+    || R05_DATATAG_NUMBER != cl_iter_tag(sFileNo)
   ) {
     r05_recognition_impossible();
   }
@@ -1065,7 +1073,7 @@ R05_DEFINE_ENTRY_FUNCTION(Open, "Open") {
   filename_len =
     r05_read_chars(eFileName, filename, FILENAME_LEN, sFileNo, arg_end);
 
-  file_no = sFileNo->info.number % FILE_LIMIT;
+  file_no = cl_iter_number(sFileNo) % FILE_LIMIT;
 
   if (filename_len != 0) {
     filename[filename_len] = '\0';
@@ -1073,14 +1081,14 @@ R05_DEFINE_ENTRY_FUNCTION(Open, "Open") {
     sprintf(filename, filename_format, file_no);
   }
 
-  if (R05_DATATAG_CHAR == sMode->tag) {
-    char mode = sMode->info.char_;
+  if (R05_DATATAG_CHAR == cl_iter_tag(sMode)) {
+    char mode = cl_iter_char(sMode);
     if (mode != 'r' && mode != 'w' && mode != 'a') {
       r05_builtin_error("Bad file mode, expected 'r', 'w' or 'a'");
     }
     mode_str[0] = mode;
   } else {
-    mode = sMode->info.function->name;
+    mode = cl_iter_function(sMode)->name;
   }
 
   if (! r05_empty_hole(eFileName[1], arg_end)) {
@@ -1123,15 +1131,15 @@ static void ensure_close_stream(unsigned int file_no) {
   В e.Expr’ все литеры заменены на их коды ASCII
 */
 R05_DEFINE_ENTRY_FUNCTION(Ord, "Ord") {
-  struct r05_node *callee = arg_begin->next;
-  struct r05_node *p = callee->next;
+  cl_iter_t callee = cl_iter_next(arg_begin);
+  cl_iter_t p = cl_iter_next(callee);
 
-  while (p != arg_end) {
-    if (p->tag == R05_DATATAG_CHAR) {
-      p->tag = R05_DATATAG_NUMBER;
-      p->info.number = (unsigned char) p->info.char_;
+  while (! cl_iter_eq(p, arg_end)) {
+    if (cl_iter_tag(p) == R05_DATATAG_CHAR) {
+      cl_iter_set_tag(p, R05_DATATAG_NUMBER);
+      cl_iter_set_number(p, (unsigned char) cl_iter_char(p));
     }
-    p = p->next;
+    p = cl_iter_next(p);
   }
 
   r05_splice_to_freelist(arg_begin, callee);
@@ -1144,25 +1152,25 @@ enum output_func_type {
 };
 
 static void output_func(
-  struct r05_node *arg_begin, struct r05_node *arg_end,
+  cl_iter_t arg_begin, cl_iter_t arg_end,
   enum output_func_type type
 ) {
-  struct r05_node *callee = arg_begin->next;
-  struct r05_node *p, *before_expr;
+  cl_iter_t callee = cl_iter_next(arg_begin);
+  cl_iter_t p, before_expr;
   FILE *output;
 
   if (type == PRINT || type == PROUT) {
     before_expr = callee;
     output = stdout;
   } else if (type == PUT || type == PUTOUT || type == WRITE) {
-    struct r05_node *pfile_no = callee->next;
+    cl_iter_t pfile_no = cl_iter_next(callee);
 
-    if (R05_DATATAG_NUMBER != pfile_no->tag) {
+    if (R05_DATATAG_NUMBER != cl_iter_tag(pfile_no)) {
       r05_recognition_impossible();
     }
 
     before_expr = pfile_no;
-    output = open_numbered((unsigned int) pfile_no->info.number, 'w');
+    output = open_numbered((unsigned int) cl_iter_number(pfile_no), 'w');
   } else {
     r05_switch_default_violation(type);
   }
@@ -1174,18 +1182,24 @@ static void output_func(
   ((putc_call) != EOF ? (void) 0 \
   : r05_builtin_error_errno("Error in call " #putc_call))
 
-  for (p = before_expr->next; p != arg_end; p = p->next) {
-    switch (p->tag) {
+  for (
+    p = cl_iter_next(before_expr);
+    ! cl_iter_eq(p, arg_end);
+    p = cl_iter_next(p)
+  ) {
+    switch (cl_iter_tag(p)) {
       case R05_DATATAG_CHAR:
-        CHECK_PUTC(putc(p->info.char_, output));
+        CHECK_PUTC(putc(cl_iter_char(p), output));
         break;
 
       case R05_DATATAG_FUNCTION:
-        CHECK_PRINTF(fprintf(output, "%s ", p->info.function->name));
+        CHECK_PRINTF(fprintf(output, "%s ", cl_iter_function(p)->name));
         break;
 
       case R05_DATATAG_NUMBER:
-        CHECK_PRINTF(fprintf(output, "%lu ", (long unsigned int) p->info.number));
+        CHECK_PRINTF(
+          fprintf(output, "%lu ", (long unsigned int) cl_iter_number(p))
+        );
         break;
 
       case R05_DATATAG_OPEN_BRACKET:
@@ -1197,7 +1211,7 @@ static void output_func(
         break;
 
       default:
-        r05_switch_default_violation(p->tag);
+        r05_switch_default_violation(cl_iter_tag(p));
     }
   }
 
@@ -1260,9 +1274,9 @@ ALIAS_DESCRIPTOR(Rp, "Rp", r05_rp);
   29. <Step> == s.NUMBER
 */
 R05_DEFINE_ENTRY_FUNCTION(Step, "Step") {
-  arg_begin->tag = R05_DATATAG_NUMBER;
-  arg_begin->info.number = r05_step_count();
-  r05_splice_to_freelist(arg_begin->next, arg_end);
+  cl_iter_set_tag(arg_begin, R05_DATATAG_NUMBER);
+  cl_iter_set_number(arg_begin, r05_step_count());
+  r05_splice_to_freelist(cl_iter_next(arg_begin), arg_end);
 }
 
 
@@ -1283,58 +1297,49 @@ R05_DEFINE_ENTRY_FUNCTION(Sub, "Sub") {
       e.Sign ::= '+' | '-' | пусто
 */
 R05_DEFINE_ENTRY_FUNCTION(Symb, "Symb") {
-  struct r05_node *callable = arg_begin->next;
-  struct r05_node *number_start = callable->next;
-  struct r05_node *p;
+  cl_iter_t callable = cl_iter_next(arg_begin);
+  cl_iter_t number_start = cl_iter_next(callable);
+  cl_iter_t p;
 
 
-  if (R05_DATATAG_CHAR == number_start->tag) {
-    char sign = number_start->info.char_;
+  if (R05_DATATAG_CHAR == cl_iter_tag(number_start)) {
+    char sign = cl_iter_char(number_start);
 
     if (sign != '+' && sign != '-') {
       r05_recognition_impossible();
     }
-    number_start = number_start->next;
+    number_start = cl_iter_next(number_start);
   }
 
-  if (R05_DATATAG_NUMBER != number_start->tag) {
+  if (R05_DATATAG_NUMBER != cl_iter_tag(number_start)) {
     r05_recognition_impossible();
   }
   p = number_start;
 
-  /* Пропускаем лидирующие нули */
-  while (R05_DATATAG_NUMBER == p->tag && 0 == p->info.number) {
-    p = p->next;
+  while (R05_DATATAG_NUMBER == cl_iter_tag(p) && 0 == cl_iter_number(p)) {
+    p = cl_iter_next(p);
   }
 
-  if (p == arg_end) {
-    /* Число состоит из нулей, результат — ноль */
-    number_start->tag = R05_DATATAG_CHAR;
-    number_start->info.char_ = '0';
+  if (cl_iter_eq(p, arg_end)) {
+    cl_iter_set_tag(number_start, R05_DATATAG_CHAR);
+    cl_iter_set_char(number_start, '0');
     r05_splice_to_freelist(arg_begin, callable);
-    r05_splice_to_freelist(number_start->next, arg_end);
-  } else if (R05_DATATAG_NUMBER == p->tag) {
-    /* Есть ненулевые цифры, подсчитываем их */
+    r05_splice_to_freelist(cl_iter_next(number_start), arg_end);
+  } else if (R05_DATATAG_NUMBER == cl_iter_tag(p)) {
     size_t nmacrodigits;
-    struct r05_node *pvalue_start = p;
+    cl_iter_t pvalue_start = p;
 
     nmacrodigits = 0;
-    while (R05_DATATAG_NUMBER == p->tag) {
+    while (R05_DATATAG_NUMBER == cl_iter_tag(p)) {
       nmacrodigits += 1;
-      p = p->next;
+      p = cl_iter_next(p);
     }
 
-    if (p == arg_end) {
-      /*
-        Длина десятичного числа = lg(2) × длина двоичного числа
-        lg(2) = 0.30102… ≈ 28 / 93 = 0.30107…, т.е. 28 / 93 — оценка сверху.
-        Это хорошая оценка, для числа из 1000 32-битных макроцифр даёт
-        ошибку только в 2 лишние десятичные цифры.
-      */
+    if (cl_iter_eq(p, arg_end)) {
       size_t nbits = nmacrodigits * R05_NUMBER_BITS;
       size_t ndecdigits = (nbits * 28 + 92) / 93;
       size_t i;
-      struct r05_node *insert_pos, *last_dec_digit;
+      cl_iter_t insert_pos, last_dec_digit;
       r05_number rem;
       int last_loop;
 
@@ -1350,9 +1355,9 @@ R05_DEFINE_ENTRY_FUNCTION(Symb, "Symb") {
       for (i = 0; i < ndecdigits; ++i) {
         r05_alloc_char('0');
       }
-      insert_pos = arg_end->next;
+      insert_pos = cl_iter_next(arg_end);
       r05_splice_from_freelist(insert_pos);
-      last_dec_digit = insert_pos->prev;
+      last_dec_digit = cl_iter_prev(insert_pos);
 
       do {
         rem = 0;
@@ -1360,27 +1365,29 @@ R05_DEFINE_ENTRY_FUNCTION(Symb, "Symb") {
         do {
           r05_number high, low;
 
-          high = (rem << HALF) | (p->info.number >> HALF);
+          high = (rem << HALF) | (cl_iter_number(p) >> HALF);
           rem = high % DEC_POWER;
           high /= DEC_POWER;
 
-          low = (rem << HALF) | (p->info.number & HALF_MASK);
+          low = (rem << HALF) | (cl_iter_number(p) & HALF_MASK);
           rem = low % DEC_POWER;
           low /= DEC_POWER;
 
-          p->info.number = (high << HALF) | low;
-          p = p->next;
-        } while (p != arg_end);
+          cl_iter_set_number(p, (high << HALF) | low);
+          p = cl_iter_next(p);
+        } while (! cl_iter_eq(p, arg_end));
 
-        if (0 == pvalue_start->info.number) {
-          pvalue_start = pvalue_start->next;
+        if (0 == cl_iter_number(pvalue_start)) {
+          pvalue_start = cl_iter_next(pvalue_start);
         }
 
-        last_loop = pvalue_start == arg_end;
+        last_loop = cl_iter_eq(pvalue_start, arg_end);
         for (i = 0; last_loop ? rem > 0 : i < DEC_CHUNK; ++i) {
-          last_dec_digit->info.char_ += (char) (rem % 10);
+          cl_iter_set_char(
+            last_dec_digit, cl_iter_char(last_dec_digit) + (char) (rem % 10)
+          );
           rem /= 10;
-          last_dec_digit = last_dec_digit->prev;
+          last_dec_digit = cl_iter_prev(last_dec_digit);
         }
       } while (! last_loop);
 
@@ -1402,7 +1409,7 @@ R05_DEFINE_ENTRY_FUNCTION(Time, "Time") {
   char *time_str, *n;
   time_t now;
 
-  if (arg_begin->next->next != arg_end) {
+  if (! cl_iter_eq(cl_iter_next(cl_iter_next(arg_begin)), arg_end)) {
     r05_recognition_impossible();
   }
 
@@ -1438,15 +1445,15 @@ R05_DEFINE_ENTRY_FUNCTION(Time, "Time") {
         | '*0' — empty expression
 */
 R05_DEFINE_ENTRY_FUNCTION(Type, "Type") {
-  struct r05_node *callee = arg_begin->next;
-  struct r05_node *first_term = callee->next;
+  cl_iter_t callee = cl_iter_next(arg_begin);
+  cl_iter_t first_term = cl_iter_next(callee);
   char type, subtype;
 
-  if (first_term == arg_end) {
+  if (cl_iter_eq(first_term, arg_end)) {
     type = '*';
     subtype = '0';
-  } else if (R05_DATATAG_CHAR == first_term->tag) {
-    char ch = first_term->info.char_;
+  } else if (R05_DATATAG_CHAR == cl_iter_tag(first_term)) {
+    char ch = cl_iter_char(first_term);
 
     if (isupper(ch)) {
       subtype = 'u';
@@ -1463,12 +1470,12 @@ R05_DEFINE_ENTRY_FUNCTION(Type, "Type") {
     } else {
       type = 'O';
     }
-  } else if (R05_DATATAG_FUNCTION == first_term->tag) {
+  } else if (R05_DATATAG_FUNCTION == cl_iter_tag(first_term)) {
     type = 'W';
     subtype = 'q';
 
-    if (isalpha((int) first_term->info.function->name[0])) {
-      const char *p = &first_term->info.function->name[1];
+    if (isalpha((int) cl_iter_function(first_term)->name[0])) {
+      const char *p = &cl_iter_function(first_term)->name[1];
       while (*p != '\0' && is_ident_tail(*p)) {
         p++;
       }
@@ -1477,23 +1484,23 @@ R05_DEFINE_ENTRY_FUNCTION(Type, "Type") {
         subtype = 'i';
       }
     }
-  } else if (R05_DATATAG_NUMBER == first_term->tag) {
+  } else if (R05_DATATAG_NUMBER == cl_iter_tag(first_term)) {
     type = 'N';
     subtype = '0';
-  } else if (R05_DATATAG_OPEN_BRACKET == first_term->tag) {
+  } else if (R05_DATATAG_OPEN_BRACKET == cl_iter_tag(first_term)) {
     type = 'B';
     subtype = '0';
   } else {
-    r05_switch_default_violation(first_term->tag);
+    r05_switch_default_violation(cl_iter_tag(first_term));
 #ifndef R05_NORETURN_DEFINED
     return;
 #endif
   }
 
-  arg_begin->tag = R05_DATATAG_CHAR;
-  arg_begin->info.char_ = type;
-  callee->tag = R05_DATATAG_CHAR;
-  callee->info.char_ = subtype;
+  cl_iter_set_tag(arg_begin, R05_DATATAG_CHAR);
+  cl_iter_set_char(arg_begin, type);
+  cl_iter_set_tag(callee, R05_DATATAG_CHAR);
+  cl_iter_set_char(callee, subtype);
 
   r05_splice_to_freelist(arg_end, arg_end);
 }
@@ -1505,14 +1512,14 @@ R05_DEFINE_ENTRY_FUNCTION(Type, "Type") {
    В e.Expr’ все литеры приведены к верхнему регистру
 */
 R05_DEFINE_ENTRY_FUNCTION(Upper, "Upper") {
-  struct r05_node *callee = arg_begin->next;
-  struct r05_node *p = callee->next;
+  cl_iter_t callee = cl_iter_next(arg_begin);
+  cl_iter_t p = cl_iter_next(callee);
 
-  while (p != arg_end) {
-    if (p->tag == R05_DATATAG_CHAR) {
-      p->info.char_ = (char) toupper(p->info.char_);
+  while (! cl_iter_eq(p, arg_end)) {
+    if (cl_iter_tag(p) == R05_DATATAG_CHAR) {
+      cl_iter_set_char(p, (char) toupper(cl_iter_char(p)));
     }
-    p = p->next;
+    p = cl_iter_next(p);
   }
 
   r05_splice_to_freelist(arg_begin, callee);
@@ -1554,7 +1561,7 @@ R05_IMPLEMENT_METAFUNCTION(Residue, "Residue") {
   r05c_Mu(arg_begin, arg_end);
 }
 
-void r05c_k3F_(struct r05_node *arg_begin, struct r05_node *arg_end) {
+void r05c_k3F_(cl_iter_t arg_begin, cl_iter_t arg_end) {
   r05c_Residue(arg_begin, arg_end);
 }
 
@@ -1564,17 +1571,17 @@ void r05c_k3F_(struct r05_node *arg_begin, struct r05_node *arg_end) {
       e.EnvName, e.EnvValue ::= s.CHAR*
 */
 R05_DEFINE_ENTRY_FUNCTION(GetEnv, "GetEnv") {
-  struct r05_node *eEnvName[2];
+  cl_iter_t eEnvName[2];
   enum { MAX_ENV = 2000 };
   char env_name[MAX_ENV + 1];
   size_t env_name_len;
   const char *env_value;
 
   env_name_len =
-    r05_read_chars(eEnvName, env_name, MAX_ENV, arg_begin->next, arg_end);
+    r05_read_chars(eEnvName, env_name, MAX_ENV, cl_iter_next(arg_begin), arg_end);
 
   if (! r05_empty_hole(eEnvName[1], arg_end)) {
-    if (R05_DATATAG_CHAR == eEnvName[1]->next->tag) {
+    if (R05_DATATAG_CHAR == cl_iter_tag(cl_iter_next(eEnvName[1]))) {
       r05_builtin_error("very long environment variable name");
     } else {
       r05_recognition_impossible();
@@ -1599,17 +1606,17 @@ R05_DEFINE_ENTRY_FUNCTION(GetEnv, "GetEnv") {
       e.RetCode ::= '-'? s.NUMBER
 */
 R05_DEFINE_ENTRY_FUNCTION(System, "System") {
-  struct r05_node *eCommand[2];
+  cl_iter_t eCommand[2];
   enum { MAX_COMMAND = 2000 };
   char command[MAX_COMMAND + 1];
   size_t command_len;
   int retcode;
 
   command_len =
-    r05_read_chars(eCommand, command, MAX_COMMAND, arg_begin->next, arg_end);
+    r05_read_chars(eCommand, command, MAX_COMMAND, cl_iter_next(arg_begin), arg_end);
 
   if (! r05_empty_hole(eCommand[1], arg_end)) {
-    if (R05_DATATAG_CHAR == eCommand[1]->next->tag) {
+    if (R05_DATATAG_CHAR == cl_iter_tag(cl_iter_next(eCommand[1]))) {
       r05_builtin_error("very long command line");
     } else {
       r05_recognition_impossible();
@@ -1643,33 +1650,33 @@ R05_DEFINE_ENTRY_FUNCTION(System, "System") {
   53. <Exit e.RetCode>
 */
 R05_DEFINE_ENTRY_FUNCTION(Exit, "Exit") {
-  struct r05_node *callable = arg_begin->next;
-  struct r05_node *pretcode = callable->next;
+  cl_iter_t callable = cl_iter_next(arg_begin);
+  cl_iter_t pretcode = cl_iter_next(callable);
   int retcode;
   signed sign = +1;
 
-  if (pretcode == arg_end) {
+  if (cl_iter_eq(pretcode, arg_end)) {
     r05_recognition_impossible();
   }
 
-  if (R05_DATATAG_CHAR == pretcode->tag) {
-    if ('-' == pretcode->info.char_) {
+  if (R05_DATATAG_CHAR == cl_iter_tag(pretcode)) {
+    if ('-' == cl_iter_char(pretcode)) {
       sign = -1;
-      pretcode = pretcode->next;
+      pretcode = cl_iter_next(pretcode);
     } else {
       r05_recognition_impossible();
     }
   }
 
   if (
-    pretcode == arg_end
-    || R05_DATATAG_NUMBER != pretcode->tag
-    || pretcode->next != arg_end
+    cl_iter_eq(pretcode, arg_end)
+    || R05_DATATAG_NUMBER != cl_iter_tag(pretcode)
+    || ! cl_iter_eq(cl_iter_next(pretcode), arg_end)
   ) {
     r05_recognition_impossible();
   }
 
-  retcode = sign * (int) pretcode->info.number;
+  retcode = sign * (int) cl_iter_number(pretcode);
   r05_exit(retcode);
 }
 
@@ -1678,19 +1685,19 @@ R05_DEFINE_ENTRY_FUNCTION(Exit, "Exit") {
   54. <Close s.FileNo> == []
 */
 R05_DEFINE_ENTRY_FUNCTION(Close, "Close") {
-  struct r05_node *callable = arg_begin->next;
-  struct r05_node *pfile_no = callable->next;
+  cl_iter_t callable = cl_iter_next(arg_begin);
+  cl_iter_t pfile_no = cl_iter_next(callable);
   unsigned int file_no;
 
   if (
-    pfile_no == arg_end
-    || R05_DATATAG_NUMBER != pfile_no->tag
-    || pfile_no->next != arg_end
+    cl_iter_eq(pfile_no, arg_end)
+    || R05_DATATAG_NUMBER != cl_iter_tag(pfile_no)
+    || ! cl_iter_eq(cl_iter_next(pfile_no), arg_end)
   ) {
     r05_recognition_impossible();
   }
 
-  file_no = (unsigned int) pfile_no->info.number % FILE_LIMIT;
+  file_no = (unsigned int) cl_iter_number(pfile_no) % FILE_LIMIT;
   ensure_close_stream(file_no);
   r05_splice_to_freelist(arg_begin, arg_end);
 }
@@ -1706,8 +1713,8 @@ R05_DEFINE_LOCAL_ENUM(True, "True")
 R05_DEFINE_LOCAL_ENUM(False, "False")
 
 R05_DEFINE_ENTRY_FUNCTION(ExistFile, "ExistFile") {
-  struct r05_node *callee = arg_begin->next;
-  struct r05_node *eFileName[2];
+  cl_iter_t callee = cl_iter_next(arg_begin);
+  cl_iter_t eFileName[2];
   char filename[FILENAME_MAX + 1];
   size_t filename_len;
   FILE *file;
@@ -1716,7 +1723,7 @@ R05_DEFINE_ENTRY_FUNCTION(ExistFile, "ExistFile") {
     r05_read_chars(eFileName, filename, FILENAME_MAX, callee, arg_end);
 
   if (! r05_empty_hole(eFileName[1], arg_end)) {
-    if (R05_DATATAG_CHAR == eFileName[1]->next->tag) {
+    if (R05_DATATAG_CHAR == cl_iter_tag(cl_iter_next(eFileName[1]))) {
       r05_builtin_error("very long filename");
     } else {
       r05_recognition_impossible();
@@ -1726,14 +1733,14 @@ R05_DEFINE_ENTRY_FUNCTION(ExistFile, "ExistFile") {
   filename[filename_len] = '\0';
   file = fopen(filename, "r");
 
-  arg_begin->tag = R05_DATATAG_FUNCTION;
+  cl_iter_set_tag(arg_begin, R05_DATATAG_FUNCTION);
   if (file != NULL) {
-    arg_begin->info.function = &r05f_True;
+    cl_iter_set_function(arg_begin, &r05f_True);
     if (fclose(file) == EOF) {
       r05_builtin_error_errno("fclose error");
     }
   } else {
-    arg_begin->info.function = &r05f_False;
+    cl_iter_set_function(arg_begin, &r05f_False);
   }
 
   r05_splice_to_freelist(callee, arg_end);
@@ -1747,7 +1754,7 @@ R05_DEFINE_ENTRY_FUNCTION(ExistFile, "ExistFile") {
       e.Message ::= s.CHAR*
 */
 R05_DEFINE_ENTRY_FUNCTION(RemoveFile, "RemoveFile") {
-  struct r05_node *eFileName[2], *left_bracket, *right_bracket;
+  cl_iter_t eFileName[2], left_bracket, right_bracket;
   char filename[FILENAME_MAX + 1];
   size_t filename_len;
   int res;
@@ -1755,10 +1762,10 @@ R05_DEFINE_ENTRY_FUNCTION(RemoveFile, "RemoveFile") {
   const char *message;
 
   filename_len =
-    r05_read_chars(eFileName, filename, FILENAME_MAX, arg_begin->next, arg_end);
+    r05_read_chars(eFileName, filename, FILENAME_MAX, cl_iter_next(arg_begin), arg_end);
 
   if (! r05_empty_hole(eFileName[1], arg_end)) {
-    if (R05_DATATAG_CHAR == eFileName[1]->next->tag) {
+    if (R05_DATATAG_CHAR == cl_iter_tag(cl_iter_next(eFileName[1]))) {
       r05_builtin_error("very long filename");
     } else {
       r05_recognition_impossible();
@@ -1792,20 +1799,22 @@ R05_DEFINE_ENTRY_FUNCTION(RemoveFile, "RemoveFile") {
   58. <Implode_Ext s.CHAR*> == s.FUNCTION
 */
 R05_DEFINE_ENTRY_FUNCTION(Implodeu_Ext, "Implode_Ext") {
-  struct r05_node *func_name = arg_begin->next;
-  struct r05_node *current;
+  cl_iter_t func_name = cl_iter_next(arg_begin);
+  cl_iter_t current;
 
-  current = func_name->next;
-  while (R05_DATATAG_CHAR == current->tag) {
-    current = current->next;
+  current = cl_iter_next(func_name);
+  while (R05_DATATAG_CHAR == cl_iter_tag(current)) {
+    current = cl_iter_next(current);
   }
 
-  if (current != arg_end) {
+  if (! cl_iter_eq(current, arg_end)) {
     r05_recognition_impossible();
   }
 
-  arg_begin->tag = R05_DATATAG_FUNCTION;
-  arg_begin->info.function = implode(func_name->next, arg_end->prev);
+  cl_iter_set_tag(arg_begin, R05_DATATAG_FUNCTION);
+  cl_iter_set_function(
+    arg_begin, implode(cl_iter_next(func_name), cl_iter_prev(arg_end))
+  );
   r05_splice_to_freelist(func_name, arg_end);
 }
 
@@ -1820,8 +1829,8 @@ ALIAS_DESCRIPTOR(Explodeu_Ext, "Explode_Ext", r05c_Explode)
   60. <TimeElapsed 0?> == s.CHAR+
 */
 R05_DEFINE_ENTRY_FUNCTION(TimeElapsed, "TimeElapsed") {
-  struct r05_node *func_name = arg_begin->next;
-  struct r05_node *maybe_zero = func_name->next;
+  cl_iter_t func_name = cl_iter_next(arg_begin);
+  cl_iter_t maybe_zero = cl_iter_next(func_name);
   double now = r05_time_elapsed();
   char buffer[100];
   static double last_cutoff = 0;
@@ -1829,11 +1838,12 @@ R05_DEFINE_ENTRY_FUNCTION(TimeElapsed, "TimeElapsed") {
   sprintf(buffer, "%.3f", now - last_cutoff);
 
   if (
-    R05_DATATAG_NUMBER == maybe_zero->tag && 0 == maybe_zero->info.number
-    && maybe_zero->next == arg_end
+    R05_DATATAG_NUMBER == cl_iter_tag(maybe_zero)
+    && 0 == cl_iter_number(maybe_zero)
+    && cl_iter_eq(cl_iter_next(maybe_zero), arg_end)
   ) {
     last_cutoff = now;
-  } else if (maybe_zero != arg_end) {
+  } else if (! cl_iter_eq(maybe_zero, arg_end)) {
     r05_recognition_impossible();
   }
 
@@ -1867,10 +1877,10 @@ R05_DEFINE_ENTRY_FUNCTION(Compare, "Compare") {
     result *= arg.x.sign;
   }
 
-  arg_begin->tag = R05_DATATAG_CHAR;
+  cl_iter_set_tag(arg_begin, R05_DATATAG_CHAR);
   /* Suppress false warning in BCC 5.5.1 */
-  arg_begin->info.char_ = (char) (result < 0 ? '-' : result > 0 ? '+' : '0');
-  r05_splice_to_freelist(arg_begin->next, arg_end);
+  cl_iter_set_char(arg_begin, (char) (result < 0 ? '-' : result > 0 ? '+' : '0'));
+  r05_splice_to_freelist(cl_iter_next(arg_begin), arg_end);
 }
 
 
@@ -1884,15 +1894,18 @@ static r05_number random_digit(void);
       |e.RandomDigits| == ((s.Len != 0) ? s.Len : 1)
 */
 R05_DEFINE_ENTRY_FUNCTION(Random, "Random") {
-  struct r05_node *callable = arg_begin->next;
-  struct r05_node *pcount = callable->next;
+  cl_iter_t callable = cl_iter_next(arg_begin);
+  cl_iter_t pcount = cl_iter_next(callable);
   r05_number count;
 
-  if (R05_DATATAG_NUMBER != pcount->tag || pcount->next != arg_end) {
+  if (
+    R05_DATATAG_NUMBER != cl_iter_tag(pcount)
+    || ! cl_iter_eq(cl_iter_next(pcount), arg_end)
+  ) {
     r05_recognition_impossible();
   }
 
-  count = pcount->info.number;
+  count = cl_iter_number(pcount);
   count = count > 0 ? count - 1 : 1;
   count = random_digit_in_range(count) + 1;
 
@@ -1913,24 +1926,27 @@ R05_DEFINE_ENTRY_FUNCTION(Random, "Random") {
       s.RandomDigit <= s.Max
 */
 R05_DEFINE_ENTRY_FUNCTION(RandomDigit, "RandomDigit") {
-  struct r05_node *callee = arg_begin->next;
-  struct r05_node *pmax = callee->next;
+  cl_iter_t callee = cl_iter_next(arg_begin);
+  cl_iter_t pmax = cl_iter_next(callee);
   const r05_number MAX = ~0;
   r05_number max, res;
 
-  if (R05_DATATAG_NUMBER != pmax->tag || pmax->next != arg_end) {
+  if (
+    R05_DATATAG_NUMBER != cl_iter_tag(pmax)
+    || ! cl_iter_eq(cl_iter_next(pmax), arg_end)
+  ) {
     r05_recognition_impossible();
   }
 
-  max = pmax->info.number;
+  max = cl_iter_number(pmax);
   if (max != MAX) {
     res = random_digit_in_range(max + 1);
   } else {
     res = random_digit();
   }
 
-  arg_begin->tag = R05_DATATAG_NUMBER;
-  arg_begin->info.number = res;
+  cl_iter_set_tag(arg_begin, R05_DATATAG_NUMBER);
+  cl_iter_set_number(arg_begin, res);
   r05_splice_to_freelist(callee, arg_end);
 }
 
@@ -2006,25 +2022,9 @@ R05_DEFINE_ENTRY_FUNCTION(Write, "Write") {
 R05_DEFINE_LOCAL_ENUM(special, "special")
 R05_DEFINE_LOCAL_ENUM(regular, "regular")
 
-
-/*
-  Чтобы добавить встроенную функцию Рефала-5, нужно раскомментировать
-  строчку в функции ListOfBuiltin и реализовать функцию.
-
-  Для удобства чтения и поиска функция должна находиться в месте,
-  определяемом её порядковым номером. Например, Lenw (номер 17) должна
-  находиться между Get (14) и Mod (19).
-
-  В комментарии перед функцией должен быть кратко описан её тип в стиле
-  принятой здесь нотации.
-
-  Функции с номерами 42 ("Imp$$") и 43 ("Stop$$") определять не нужно,
-  поскольку они — деталь внутренней реализации Рефала-5 (версии PZ).
-*/
-
 R05_DECLARE_ENTRY_FUNCTION(ListOfBuiltin);
 
-static struct builtin_info s_builtin_info[] = {
+static struct builtin_info s_builtin_info[100] = {
 #define ALLOC_BUILTIN(id, function, type) \
   { id, &r05f_ ## function, &r05f_ ## type },
 
@@ -2036,14 +2036,12 @@ static struct builtin_info s_builtin_info[] = {
   ALLOC_BUILTIN(6, Chr, regular)
   ALLOC_BUILTIN(7, Cp, regular)
   ALLOC_BUILTIN(8, Dg, regular)
-  /* ALLOC_BUILTIN(9, Dgall, regular) */
   ALLOC_BUILTIN(10, Div, regular)
   ALLOC_BUILTIN(11, Divmod, regular)
   ALLOC_BUILTIN(12, Explode, regular)
   ALLOC_BUILTIN(13, First, regular)
   ALLOC_BUILTIN(14, Get, regular)
   ALLOC_BUILTIN(15, Implode, regular)
-  /* ALLOC_BUILTIN(16, Last, regular) */
   ALLOC_BUILTIN(17, Lenw, regular)
   ALLOC_BUILTIN(18, Lower, regular)
   ALLOC_BUILTIN(19, Mod, regular)
@@ -2101,11 +2099,11 @@ static struct builtin_info s_builtin_info[] = {
 
 
 R05_DEFINE_ENTRY_FUNCTION(ListOfBuiltin, "ListOfBuiltin") {
-  struct r05_node *callee = arg_begin->next;
-  struct r05_node *left_bracket, *right_bracket;
+  cl_iter_t callee = cl_iter_next(arg_begin);
+  cl_iter_t left_bracket, right_bracket;
   struct builtin_info *info;
 
-  if (callee->next != arg_end) {
+  if (! cl_iter_eq(cl_iter_next(callee), arg_end)) {
     r05_recognition_impossible();
   }
 
