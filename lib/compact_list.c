@@ -96,9 +96,8 @@ static void macro_registry_add(cm_macronode_t *mn) {
   } else {
     id = s_macro_high_water++;
   }
-  assert(id <= USHRT_MAX);
   macro_registry_grow_to(id);
-  mn->macro_id = (unsigned short)id;
+  mn->macro_id = id;
   s_macros[id] = mn;
   s_macro_count++;
 }
@@ -220,6 +219,7 @@ static cm_macronode_t *macro_grow(cm_macronode_t *mn, int new_capacity) {
   grown->next_macro->prev_macro = grown;
   cl_slots_relocate_macro(grown);
   macro_registry_remove(mn);
+  free(mn->slot_by_index);
   free(mn);
   check_brackets(grown, "grow");
   return grown;
@@ -247,6 +247,10 @@ cm_macronode_t *cm_macronode_alloc(int capacity) {
   mn->prev_macro = NULL;
   mn->next_macro = NULL;
   mn->slot_list_head = 0;
+  mn->slot_by_index = capacity > 0
+    ? (unsigned int *)calloc((size_t)capacity, sizeof(unsigned int))
+    : NULL;
+  assert(capacity == 0 || mn->slot_by_index != NULL);
   mn->capacity   = (unsigned short)capacity;
   mn->count      = 0;
   macro_registry_add(mn);
@@ -258,8 +262,9 @@ static cm_macronode_t *macronode_alloc_with_reserve(int min_capacity) {
 }
 
 void cm_macronode_free(cm_macronode_t *mn) {
-  macro_registry_remove(mn);
   cl_slots_kill_macro(mn);
+  macro_registry_remove(mn);
+  free(mn->slot_by_index);
   free(mn);
 }
 

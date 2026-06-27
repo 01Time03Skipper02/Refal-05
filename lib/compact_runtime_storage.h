@@ -23,6 +23,10 @@ cl_iter_t crs_buried_begin(compact_runtime_storage_t *storage);
 cl_iter_t crs_buried_end(compact_runtime_storage_t *storage);
 
 void crs_reset_build(compact_runtime_storage_t *storage);
+void crs_alloc_item(compact_runtime_storage_t *storage, cm_item_t item);
+void crs_alloc_chars(
+  compact_runtime_storage_t *storage, const char buffer[], size_t len
+);
 cl_iter_t crs_alloc_node(
   compact_runtime_storage_t *storage, enum r05_datatag tag
 );

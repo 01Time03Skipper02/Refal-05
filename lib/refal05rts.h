@@ -239,11 +239,14 @@ cl_iter_t r05_alloc_node(enum r05_datatag tag);
 
 cl_iter_t r05_insert_pos(void);
 
+#ifdef R05_COMPACT_HANDLES
+void r05_alloc_char(char ch);
+void r05_alloc_number(r05_number num);
+void r05_alloc_function(struct r05_function *func);
+#else
 static inline void r05_alloc_char(char ch) {
   cl_iter_set_char(r05_alloc_node(R05_DATATAG_CHAR), ch);
 }
-
-void r05_alloc_chars(const char buffer[], size_t len);
 
 static inline void r05_alloc_number(r05_number num) {
   cl_iter_set_number(r05_alloc_node(R05_DATATAG_NUMBER), num);
@@ -252,6 +255,9 @@ static inline void r05_alloc_number(r05_number num) {
 static inline void r05_alloc_function(struct r05_function *func) {
   cl_iter_set_function(r05_alloc_node(R05_DATATAG_FUNCTION), func);
 }
+#endif
+
+void r05_alloc_chars(const char buffer[], size_t len);
 
 #define r05_alloc_open_bracket(pos) \
   (*(pos) = r05_alloc_node(R05_DATATAG_OPEN_BRACKET))

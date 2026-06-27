@@ -271,6 +271,22 @@ R05_DEFINE_ENTRY_FUNCTION(Add, "Add") {
 }
 
 
+R05_DEFINE_ENTRY_FUNCTION(Inc, "Inc") {
+  struct arithm_arg arg;
+  cl_iter_t func_name = cl_iter_next(arg_begin);
+  cl_iter_t p = cl_iter_next(func_name);
+
+  p = parse_signed_number(&arg.x, p);
+  if (! cl_iter_eq(p, arg_end)) {
+    r05_recognition_impossible();
+  }
+
+  arg.y.sign = +1;
+  arg.y.value = 1;
+  add(&arg, arg_begin, arg_end);
+}
+
+
 static cl_iter_t emplace_number(
   struct signed_number res, r05_number high, cl_iter_t p
 ) {
@@ -566,6 +582,79 @@ R05_DEFINE_ENTRY_FUNCTION(Get, "Get") {
 
   r05_reset_allocator();
   read_from_stream(stream);
+  r05_splice_from_freelist(arg_begin);
+  r05_splice_to_freelist(arg_begin, arg_end);
+}
+
+
+R05_DEFINE_ENTRY_FUNCTION(LoadFile, "LoadFile") {
+  cl_iter_t eFileName[2];
+  cl_iter_t open = CL_ITER_NULL;
+  cl_iter_t close = CL_ITER_NULL;
+  enum {
+    FILENAME_LEN = FILENAME_MAX
+  };
+  char filename[FILENAME_LEN + 1] = { '\0' };
+  char buffer[4096];
+  size_t filename_len;
+  size_t used = 0;
+  int line_open = 0;
+  int ch;
+  FILE *input;
+
+  filename_len = r05_read_chars(
+    eFileName, filename, FILENAME_LEN, cl_iter_next(arg_begin), arg_end
+  );
+  if (! r05_empty_hole(eFileName[1], arg_end)) {
+    static const char error_format[] =
+      "Very long file name, maximum available is %u";
+    char error[sizeof(error_format) + 32];
+
+    sprintf(error, error_format, (unsigned int) FILENAME_MAX);
+    r05_builtin_error(error);
+  }
+  filename[filename_len] = '\0';
+
+  input = fopen(filename, "r");
+  if (input == NULL) {
+    r05_builtin_error_errno(filename);
+  }
+
+  r05_reset_allocator();
+  while ((ch = fgetc(input)) != EOF) {
+    if (! line_open) {
+      r05_alloc_open_bracket(&open);
+      line_open = 1;
+      used = 0;
+    }
+
+    if (ch == '\n') {
+      if (used != 0) {
+        r05_alloc_chars(buffer, used);
+        used = 0;
+      }
+      r05_alloc_close_bracket(&close);
+      r05_link_brackets(open, close);
+      line_open = 0;
+      continue;
+    }
+
+    buffer[used++] = (char) ch;
+    if (used == sizeof(buffer)) {
+      r05_alloc_chars(buffer, used);
+      used = 0;
+    }
+  }
+
+  if (line_open) {
+    if (used != 0) {
+      r05_alloc_chars(buffer, used);
+    }
+    r05_alloc_close_bracket(&close);
+    r05_link_brackets(open, close);
+  }
+  fclose(input);
+
   r05_splice_from_freelist(arg_begin);
   r05_splice_to_freelist(arg_begin, arg_end);
 }

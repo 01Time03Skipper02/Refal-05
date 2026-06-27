@@ -229,7 +229,9 @@ int r05_repeated_tevar_left(
   cl_iter_t *tevar, cl_iter_t left, cl_iter_t right,
   cl_iter_t *tevar_sample, char type
 ) {
+#ifdef R05_SHOW_STAT
   clock_t start_match = clock();
+#endif
   cl_iter_t current = cl_iter_next(left);
   cl_iter_t limit = right;
   cl_iter_t cur_sample = tevar_sample[0];
@@ -243,9 +245,13 @@ int r05_repeated_tevar_left(
     current = cl_iter_next(current);
   }
 
+#ifdef R05_SHOW_STAT
   (type == 't' ? add_match_repeated_tvar_time : add_match_repeated_evar_time)(
     clock() - start_match
   );
+#else
+  (void)type;
+#endif
 
   if (cl_iter_eq(cur_sample, limit_sample)) {
     tevar[0] = cl_iter_next(left);
@@ -261,7 +267,9 @@ int r05_repeated_tevar_right(
   cl_iter_t *tevar, cl_iter_t left, cl_iter_t right,
   cl_iter_t *tevar_sample, char type
 ) {
+#ifdef R05_SHOW_STAT
   clock_t start_match = clock();
+#endif
   cl_iter_t current = cl_iter_prev(right);
   cl_iter_t limit = left;
   cl_iter_t cur_sample = tevar_sample[1];
@@ -275,9 +283,13 @@ int r05_repeated_tevar_right(
     cur_sample = cl_iter_prev(cur_sample);
   }
 
+#ifdef R05_SHOW_STAT
   (type == 't' ? add_match_repeated_tvar_time : add_match_repeated_evar_time)(
     clock() - start_match
   );
+#else
+  (void)type;
+#endif
 
   if (cl_iter_eq(cur_sample, limit_sample)) {
     tevar[0] = cl_iter_next(current);
@@ -499,6 +511,32 @@ cl_iter_t r05_insert_pos(void) {
 }
 
 
+#ifdef R05_COMPACT_HANDLES
+void r05_alloc_char(char ch) {
+  cm_item_t item = { 0 };
+  item.tag = R05_DATATAG_CHAR;
+  item.info.char_ = ch;
+  crs_alloc_item(&s_compact_storage, item);
+}
+
+
+void r05_alloc_number(r05_number num) {
+  cm_item_t item = { 0 };
+  item.tag = R05_DATATAG_NUMBER;
+  item.info.number = num;
+  crs_alloc_item(&s_compact_storage, item);
+}
+
+
+void r05_alloc_function(struct r05_function *func) {
+  cm_item_t item = { 0 };
+  item.tag = R05_DATATAG_FUNCTION;
+  item.info.function = func;
+  crs_alloc_item(&s_compact_storage, item);
+}
+#endif
+
+
 #ifndef R05_COMPACT_HANDLES
 static void list_splice(
   struct r05_node *res, struct r05_node *begin, struct r05_node *end
@@ -522,7 +560,9 @@ static void add_copy_tevar_time(clock_t duration);
 
 void r05_alloc_tevar(cl_iter_t *sample) {
   cl_iter_t p, limit;
+#ifdef R05_SHOW_STAT
   clock_t start_copy_time = clock();
+#endif
 
 #ifdef R05_COMPACT_HANDLES
   cl_iter_t *bracket_stack = NULL;
@@ -595,15 +635,21 @@ void r05_alloc_tevar(cl_iter_t *sample) {
   assert(cl_iter_is_null(bracket_stack));
 #endif
 
+#ifdef R05_SHOW_STAT
   add_copy_tevar_time(clock() - start_copy_time);
+#endif
 }
 
 
 void r05_alloc_chars(const char buffer[], size_t len) {
+#ifdef R05_COMPACT_HANDLES
+  crs_alloc_chars(&s_compact_storage, buffer, len);
+#else
   size_t i;
   for (i = 0; i < len; ++i) {
     r05_alloc_char(buffer[i]);
   }
+#endif
 }
 
 
@@ -747,6 +793,7 @@ static clock_t s_total_match_repeated_evar_time_outside_e;
 
 static int s_in_generated;
 static int s_in_e_loop;
+static unsigned long s_step_counter = 0;
 
 #ifdef R05_COMPACT_LIST
 static size_t s_compact_peak_nodes  = 0;
@@ -755,6 +802,10 @@ static size_t s_compact_step_count  = 0;
 
 static void compact_track_step(void);
 #endif  /* R05_COMPACT_LIST */
+
+#ifndef R05_STAT_SAMPLE_PERIOD
+#define R05_STAT_SAMPLE_PERIOD 1000
+#endif  /* R05_STAT_SAMPLE_PERIOD */
 
 
 #ifdef R05_COMPACT_HANDLES
@@ -792,11 +843,14 @@ static struct r05_function *s_profiled_functions;
 
 static void start_profiler(void) {
   s_start_program_time = clock();
+#ifdef R05_SHOW_STAT
   s_in_generated = 0;
+#endif
 }
 
 
 static void start_building_result(void) {
+#ifdef R05_SHOW_STAT
   if (s_in_generated) {
     clock_t pattern_match;
 
@@ -809,10 +863,12 @@ static void start_building_result(void) {
       s_in_e_loop = 0;
     }
   }
+#endif
 }
 
 
 static void after_step(void) {
+#ifdef R05_SHOW_STAT
   if (s_in_generated) {
     clock_t building_result = clock() - s_start_building_result_time;
     s_total_building_result_time += building_result;
@@ -822,20 +878,30 @@ static void after_step(void) {
 
   s_in_generated = 0;
   s_in_e_loop = 0;
+#endif
 
-#ifdef R05_COMPACT_LIST
-  compact_track_step();
-#endif  /* R05_COMPACT_LIST */
-#ifdef R05_COMPACT_HANDLES
+#if defined(R05_COMPACT_LIST) && defined(R05_SHOW_STAT)
+  if (s_step_counter % R05_STAT_SAMPLE_PERIOD == 0) {
+    compact_track_step();
+  }
+#endif  /* R05_COMPACT_LIST && R05_SHOW_STAT */
+#if defined(R05_COMPACT_HANDLES) && defined(R05_COMPACT_AUTO_COMPACT)
   static int compact_skip = 0;
   if (++compact_skip % 10 == 0) {
     cm_compact_list(&s_compact_storage.view);
     cm_compact_list(&s_compact_storage.build);
     cm_compact_list(&s_compact_storage.buried);
     compact_trim_call_stack();
-    compact_track_actual_step();
   }
-#endif  /* R05_COMPACT_HANDLES */
+#endif  /* R05_COMPACT_HANDLES && R05_COMPACT_AUTO_COMPACT */
+#if defined(R05_COMPACT_HANDLES) && defined(R05_SHOW_STAT)
+  {
+    static int compact_stat_skip = 0;
+    if (++compact_stat_skip % R05_STAT_SAMPLE_PERIOD == 0) {
+    compact_track_actual_step();
+    }
+  }
+#endif  /* R05_COMPACT_HANDLES && R05_SHOW_STAT */
 }
 
 
@@ -1010,35 +1076,40 @@ static void print_functions_profile(double full_time_sec) {
 #endif  /* R05_SHOW_STAT */
 
 static void end_profiler(void) {
-  after_step();
-
 #ifdef R05_SHOW_STAT
+  after_step();
   print_profile();
 #endif  /* R05_SHOW_STAT */
 }
 
 
 void r05_start_e_loop(void) {
+#ifdef R05_SHOW_STAT
   assert(s_in_generated);
 
   if (s_in_e_loop++ == 0) {
     s_start_e_loop = clock();
   }
+#endif
 }
 
 
 void r05_this_is_generated_function(void) {
+#ifdef R05_SHOW_STAT
   s_start_pattern_match_time = clock();
   s_in_generated = 1;
+#endif
 }
 
 
 void r05_stop_e_loop(void) {
+#ifdef R05_SHOW_STAT
   assert(s_in_generated);
 
   if (--s_in_e_loop == 0) {
     s_total_e_loop += (clock() - s_start_e_loop);
   }
+#endif
 }
 
 
@@ -1062,8 +1133,6 @@ static struct r05_node s_end_view_field = {
   &s_begin_view_field, 0, R05_DATATAG_ILLEGAL, { '\0' }
 };
 #endif
-
-static unsigned long s_step_counter = 0;
 
 #ifdef R05_COMPACT_LIST
 static void compact_track_step(void) {
@@ -1598,6 +1667,9 @@ R05_NORETURN void r05_exit(int retcode) {
   r05_compact_storage_stats();
 #endif  /* R05_COMPACT_HANDLES */
 #endif  /* R05_SHOW_STAT */
+#ifdef R05_COMPACT_COUNTERS
+  cl_iter_table_dump_counters();
+#endif
 
   free_memory();
   fflush(stdout);

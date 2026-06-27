@@ -24,13 +24,17 @@
   fi
 
   source ../c-plus-plus.conf.sh
-  export R05CFLAGS="-orefal05c -DR05_SHOW_STAT $R05CFLAGS"
+  export R05CFLAGS="-orefal05c -DR05_SHOW_STAT -Wl,--allow-multiple-definition $R05CFLAGS"
   export R05PATH=../lib
-  echo Y | ${EXECUTABLE} ${MODULES} ${LIBS} Library refal05rts \
+  for module in ${MODULES} ${LIBS}; do
+    rm -f "${module}.c"
+  done
+  echo Y | ${EXECUTABLE} ${MODULES} Library refal05rts \
     cl_iter_table.c \
     compact_iter.c \
     compact_list.c \
-    compact_runtime_storage.c
+    compact_runtime_storage.c \
+    ${LIBS}
 
   mv refal05c ../bin
 

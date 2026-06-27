@@ -20,6 +20,7 @@ void cl_iter_frame_end(void);
 void cl_iter_escape(cl_handle_t it);
 
 cl_handle_t cl_iter_alloc(cm_macronode_t *m, int i);
+cl_handle_t cl_iter_alloc_temp(cm_macronode_t *m, int i);
 
 cm_iter_t cl_iter_deref(cl_handle_t it);
 
@@ -38,6 +39,7 @@ size_t cl_iter_table_live_slots(void);
 size_t cl_iter_table_peak_slots(void);
 size_t cl_iter_table_slot_size(void);
 size_t cl_iter_table_capacity_bytes(void);
+void cl_iter_table_dump_counters(void);
 
 
 #ifdef __cplusplus

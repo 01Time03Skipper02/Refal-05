@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <stdlib.h>
 
 #include "compact_runtime_storage.h"
 #include "cl_iter_table.h"
@@ -62,9 +63,52 @@ void crs_remove_range(cl_iter_t begin, cl_iter_t end) {
 void crs_reset_build(compact_runtime_storage_t *storage) {
   storage->pending_insert_pos = CL_ITER_NULL;
   if (! list_empty(&storage->build)) {
-    cl_iter_t begin = handle_from_cm(cm_list_begin(&storage->build));
-    cl_iter_t end = handle_from_cm(cm_iter_prev(cm_list_end(&storage->build)));
-    crs_remove_range(begin, end);
+    cm_list_destroy(&storage->build);
+    storage->build = cm_list_create();
+  }
+}
+
+
+void crs_alloc_item(compact_runtime_storage_t *storage, cm_item_t item) {
+  if (! cl_iter_is_null(storage->pending_insert_pos)) {
+    cl_iter_t pending = storage->pending_insert_pos;
+    cm_item_t *target = cm_iter_get(cl_iter_deref(pending));
+    *target = item;
+    storage->pending_insert_pos = CL_ITER_NULL;
+    return;
+  }
+  cm_push_back(&storage->build, item);
+}
+
+
+void crs_alloc_chars(
+  compact_runtime_storage_t *storage, const char buffer[], size_t len
+) {
+  size_t i;
+
+  if (len == 0) {
+    return;
+  }
+  if (! cl_iter_is_null(storage->pending_insert_pos)) {
+    cm_item_t item = { 0 };
+    item.tag = R05_DATATAG_CHAR;
+    item.info.char_ = buffer[0];
+    crs_alloc_item(storage, item);
+    buffer++;
+    len--;
+  }
+  if (len == 0) {
+    return;
+  }
+  {
+    cm_item_t *items = (cm_item_t *)calloc(len, sizeof(cm_item_t));
+    assert(items != NULL);
+    for (i = 0; i < len; ++i) {
+      items[i].tag = R05_DATATAG_CHAR;
+      items[i].info.char_ = buffer[i];
+    }
+    cm_push_back_bulk(&storage->build, items, (int)len);
+    free(items);
   }
 }
 
